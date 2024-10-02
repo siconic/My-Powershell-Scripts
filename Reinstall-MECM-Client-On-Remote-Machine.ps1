@@ -2,13 +2,6 @@
 #
 #
 #
-#
-#
-#
-#
-#
-#
-#
 
 cls
 
@@ -63,4 +56,21 @@ if ($lastExitCode -eq "0") {
     #Run Psexec to do the re-install
     Try { 
       $ArgumentList = "-acceptEULA -nobanner \\" + $Target + " " + "C:\Windows\System32\WindowsPowerShell\v1.0\Powershell.exe -ExeccutionPolicy Bypass -File " + $TargetDir + "\Deploy-Application.ps1 -DeploymentType Repair"
-      
+      Start-Process -FilePath "$PSScriptRoot\SupportFiles\PSexec.exe" -ArgumentList $ArgumentList -NoNewWindow -Wait
+      }
+    Catch {
+      Write-Output "Unable to use PSEXEC to start the MECM Client Install files with error:"
+      Write-Output _$
+      Write-Output "Aborting MECM client reinstall."
+      Exit 5
+      }
+  Else {
+      Write-Output "The hostname from the hosts's registry does not match its reverse DNS lookup. This indicates a DNS issue. Computer name reported from the hosts registry is:"
+      Write-Output $ComputerName
+      Write-Output "Aborting MECM client reinstall."
+      Exit 3
+      }
+Else {
+  Write-Output "Reg query error when confirming DNS Reverse Lookup. Aborting install."
+  Exit 2 
+}
