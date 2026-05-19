@@ -6,7 +6,7 @@
 cls
 
 #Set Target Host
-$Target = Read-Host -Prompt "Enter thw name of the remote computer"
+$Target = Read-Host -Prompt "Enter the name of the remote computer"
 
 #Set the version CB2303 or CB2211
 $Version = "CB2211"
