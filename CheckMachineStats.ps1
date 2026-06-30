@@ -17,7 +17,7 @@ $results = ForEach (name in $names) {
   $nsIPArr = @()
   $TestCon = TestConnection -ComputerName $name -count 1 -ErrorAction SilentlyContinue
   $ADComp = Get-ADComputer $name -Properties * | Select-Object *
-  $Success = Get-Content "\\<sharelocation>"
+#  $Success = Get-Content "\\<sharelocation>"
   $NetView = Invoke-Expression "net view $name" -ErrorVariable errorCode
 
   $nsLookup = [System.Net.DNS]::GetHostAddresses($name)
@@ -40,8 +40,8 @@ $results = ForEach (name in $names) {
   Elseif ($ErrorCode -like "*Access is denied*") {$SMBPing = "Access Denied"}
   Elseif ($ErrorCode -like "*error 53*") {$SMBPing = "No Network Path"}
 
-  If ($success) {$migrated = "yes"}
-  else {$migrated = "no"}
+#  If ($success) {$migrated = "yes"}
+#  else {$migrated = "no"}
 
   If ($TestCon) {$Status = "Online"}
   else {$Status = "Offline"}
@@ -53,7 +53,7 @@ $results = ForEach (name in $names) {
       "IP" = $TestCon.IPV4Address
       "Time(ms)" = $TestCon.ResponseTime
       "Status" = $Status
-      "Migrated" = $Migrated
+#      "Migrated" = $Migrated
       "Net View Results" = $SMBPing
       "NSLookup IP" = NSIPArr | Out-String
       "NSLookup Machine Name" = $NSName | Out-String
