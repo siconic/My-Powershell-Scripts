@@ -1,6 +1,6 @@
 #--------------------------------------------------------------------------------------
 # Script: AppAssignmentAutomation.ps1
-# Author: Earl Estrada 
+# Author: Siconic
 # Date: 7/14/2025
 # Modified: 7/25/2025
 # Last Modified by: Earl Estrada
