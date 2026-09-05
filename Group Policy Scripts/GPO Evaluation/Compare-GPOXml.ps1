@@ -197,7 +197,7 @@ param(
     [string]$ModulePath = ".\GPOCompare.psm1"
 )
 
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = "Stop"
 
 # ------------------------------------------------------------
 # Validation
@@ -208,21 +208,36 @@ if (-not (Test-Path $XmlFolder))
     throw "XML folder not found: $XmlFolder"
 }
 
-if (-not (Test-Path $OutputFolder)) {
-    New-Item -Path $OutputFolder -ItemType Directory -Force | Out-Null
+if (-not (Test-Path $OutputFolder))
+{
+    New-Item `
+        -Path $OutputFolder `
+        -ItemType Directory `
+        -Force | Out-Null
 }
+
+if (-not (Test-Path $ModulePath))
+{
+    throw "Module not found: $ModulePath"
+}
+
+# ------------------------------------------------------------
+# Load Module
+# ------------------------------------------------------------
 
 Import-Module $ModulePath -Force
 
 # ------------------------------------------------------------
-# Files
+# Deprecated Policy Reference
 # ------------------------------------------------------------
 
-$XmlFiles = Get-ChildItem -Path $XmlFolder -Filter *.xml
+$DeprecatedReferenceFile =
+    Join-Path `
+        $PSScriptRoot `
+        "DeprecatedPoliciesReference.md"
 
-if ($XmlFiles.Count -lt 2) {
-    throw "At least two XML files are required."
-}
+Import-DeprecatedPolicyReference `
+    -Path $DeprecatedReferenceFile
 
 # ------------------------------------------------------------
 # Storage
@@ -231,28 +246,57 @@ if ($XmlFiles.Count -lt 2) {
 $AllSettings     = [System.Collections.ArrayList]::new()
 $AllFirewall     = [System.Collections.ArrayList]::new()
 $AllUnclassified = [System.Collections.ArrayList]::new()
+$Failures        = [System.Collections.ArrayList]::new()
 
 # ------------------------------------------------------------
-# Parse XML Files
+# Load XML Files
 # ------------------------------------------------------------
 
-foreach ($XmlFile in $XmlFiles) {
+$XmlFiles =
+    Get-ChildItem `
+        -Path $XmlFolder `
+        -Filter *.xml
+
+if ($XmlFiles.Count -lt 1)
+{
+    throw "No XML files found."
+}
+
+Write-Host ""
+Write-Host "XML Files Found: $($XmlFiles.Count)"
+Write-Host ""
+
+# ------------------------------------------------------------
+# Parse Files
+# ------------------------------------------------------------
+
+foreach ($XmlFile in $XmlFiles)
+{
     Write-Host ""
+    Write-Host "================================"
     Write-Host "Processing: $($XmlFile.Name)"
+    Write-Host "================================"
     Write-Host ""
 
-    try {
-        $Result = Get-GPOSettingsFromXml -Path $XmlFile.FullName -GPOName $XmlFile.BaseName
+    try
+    {
+        $Result =
+            Get-GPOSettingsFromXml `
+                -Path $XmlFile.FullName `
+                -GPOName $XmlFile.BaseName
 
-        foreach ($Item in $Result.Settings) {
+        foreach ($Item in $Result.Settings)
+        {
             [void]$AllSettings.Add($Item)
         }
 
-        foreach ($Item in $Result.FirewallRules) {
+        foreach ($Item in $Result.FirewallRules)
+        {
             [void]$AllFirewall.Add($Item)
         }
 
-        foreach ($Item in $Result.Unclassified) {
+        foreach ($Item in $Result.Unclassified)
+        {
             [void]$AllUnclassified.Add($Item)
         }
 
@@ -260,20 +304,63 @@ foreach ($XmlFile in $XmlFiles) {
         Write-Host "FirewallRules : $($Result.FirewallRules.Count)"
         Write-Host "Unclassified  : $($Result.Unclassified.Count)"
     }
-    catch {
+    catch
+    {
         Write-Warning $_.Exception.Message
+
+        [void]$Failures.Add(
+            [PSCustomObject]@{
+                GPOName = $XmlFile.BaseName
+                Error   = $_.Exception.Message
+            }
+        )
     }
 }
+
+# ------------------------------------------------------------
+# Export Raw Parser Output
+# ------------------------------------------------------------
+
+$AllSettings |
+Export-Csv (
+    Join-Path $OutputFolder "ParsedSettings.csv"
+) -NoTypeInformation
+
+$AllFirewall |
+Export-Csv (
+    Join-Path $OutputFolder "FirewallRules.csv"
+) -NoTypeInformation
+
+$AllUnclassified |
+Export-Csv (
+    Join-Path $OutputFolder "UnclassifiedSettings.csv"
+) -NoTypeInformation
+
+$Failures |
+Export-Csv (
+    Join-Path $OutputFolder "ParserFailures.csv"
+) -NoTypeInformation
+
+# ------------------------------------------------------------
+# Build GPO List
+# ------------------------------------------------------------
+
+$AllGPOs =
+    $AllSettings.GPOName |
+    Sort-Object -Unique
+
+$TotalGPOs =
+    @($AllGPOs).Count
 
 # ------------------------------------------------------------
 # Build Comparison Maps
 # ------------------------------------------------------------
 
-$TotalGPOs = ($AllSettings.GPOName | Sort-Object -Unique).Count
 $ExactMap = @{}
 $NameMap  = @{}
 
-foreach ($Setting in $AllSettings) {
+foreach ($Setting in $AllSettings)
+{
     $ExactKey = @(
         $Setting.Class
         $Setting.Extension
@@ -290,43 +377,58 @@ foreach ($Setting in $AllSettings) {
         $Setting.SettingName
     ) -join "|"
 
-    if (-not $ExactMap.ContainsKey($ExactKey)) {
+    if (-not $ExactMap.ContainsKey($ExactKey))
+    {
         $ExactMap[$ExactKey] = @{
             Item = $Setting
             GPOs = [System.Collections.Generic.HashSet[string]]::new()
         }
     }
 
-    $null = $ExactMap[$ExactKey].GPOs.Add($Setting.GPOName)
+    $null =
+        $ExactMap[$ExactKey].GPOs.Add(
+            $Setting.GPOName
+        )
 
-    if (-not $NameMap.ContainsKey($NameKey)) {
-        $NameMap[$NameKey] = [System.Collections.ArrayList]::new()
+    if (-not $NameMap.ContainsKey($NameKey))
+    {
+        $NameMap[$NameKey] =
+            [System.Collections.ArrayList]::new()
     }
 
     [void]$NameMap[$NameKey].Add($Setting)
 }
 
 # ------------------------------------------------------------
-# Common (Exact)
+# Common Exact
 # ------------------------------------------------------------
 
-$CommonSettings = foreach ($Key in $ExactMap.Keys) {
+$CommonSettings =
+foreach ($Key in $ExactMap.Keys)
+{
     $Item = $ExactMap[$Key]
 
-    if ($Item.GPOs.Count -eq $TotalGPOs) {
+    if ($Item.GPOs.Count -eq $TotalGPOs)
+    {
         $Item.Item
     }
 }
 
 # ------------------------------------------------------------
-# Common (By Name)
+# Common By Name
 # ------------------------------------------------------------
 
-$CommonSettingsByName = foreach ($Key in $NameMap.Keys) {
+$CommonSettingsByName =
+foreach ($Key in $NameMap.Keys)
+{
     $Items = $NameMap[$Key]
-    $DistinctGPOs = $Items.GPOName | Sort-Object -Unique
 
-    if (@($DistinctGPOs).Count -eq $TotalGPOs) {
+    $DistinctGPOs =
+        $Items.GPOName |
+        Sort-Object -Unique
+
+    if (@($DistinctGPOs).Count -eq $TotalGPOs)
+    {
         $Items[0]
     }
 }
@@ -335,18 +437,21 @@ $CommonSettingsByName = foreach ($Key in $NameMap.Keys) {
 # Unique
 # ------------------------------------------------------------
 
-$UniqueSettings = foreach ($Key in $ExactMap.Keys) {
+$UniqueSettings =
+foreach ($Key in $ExactMap.Keys)
+{
     $Item = $ExactMap[$Key]
 
-    if ($Item.GPOs.Count -lt $TotalGPOs) {
+    if ($Item.GPOs.Count -lt $TotalGPOs)
+    {
         [PSCustomObject]@{
-            Class = $Item.Item.Class
-            Extension = $Item.Item.Extension
-            Category = $Item.Item.Category
+            Class       = $Item.Item.Class
+            Extension   = $Item.Item.Extension
+            Category    = $Item.Item.Category
             SettingName = $Item.Item.SettingName
-            Value = $Item.Item.Value
-            State = $Item.Item.State
-            PresentIn = ($Item.GPOs -join '; ')
+            Value       = $Item.Item.Value
+            State       = $Item.Item.State
+            PresentIn   = ($Item.GPOs -join "; ")
         }
     }
 }
@@ -355,11 +460,17 @@ $UniqueSettings = foreach ($Key in $ExactMap.Keys) {
 # Conflicts
 # ------------------------------------------------------------
 
-$ConflictingSettings = foreach ($Key in $NameMap.Keys) {
+$ConflictingSettings =
+foreach ($Key in $NameMap.Keys)
+{
     $Items = $NameMap[$Key]
-    $Configs = $Items | Select-Object Value,State -Unique
 
-    if (@($Configs).Count -gt 1) {
+    $Configs =
+        $Items |
+        Select-Object Value,State -Unique
+
+    if (@($Configs).Count -gt 1)
+    {
         $Items
     }
 }
@@ -368,36 +479,42 @@ $ConflictingSettings = foreach ($Key in $NameMap.Keys) {
 # Duplicates
 # ------------------------------------------------------------
 
-$DuplicateSettings = foreach ($Key in $NameMap.Keys) {
+$DuplicateSettings =
+foreach ($Key in $NameMap.Keys)
+{
     $Items = $NameMap[$Key]
-    $Configs = $Items | Select-Object Value,State -Unique
 
-    if (@($Configs).Count -eq 1) {
-        $DistinctGPOs = $Items.GPOName | Sort-Object -Unique
+    $Configs =
+        $Items |
+        Select-Object Value,State -Unique
 
-        if (@($DistinctGPOs).Count -gt 1) {
-            [PSCustomObject]@{
-                Class = $Items[0].Class
-                Extension = $Items[0].Extension
-                Category = $Items[0].Category
-                SettingName = $Items[0].SettingName
-                Value = $Items[0].Value
-                State = $Items[0].State
-                GPOs = ($DistinctGPOs -join '; ')
-            }
+    if (@($Configs).Count -eq 1)
+    {
+        $DistinctGPOs =
+            $Items.GPOName |
+            Sort-Object -Unique
+
+        if (@($DistinctGPOs).Count -gt 1)
+        {
+            $Items[0]
         }
     }
 }
 
 # ------------------------------------------------------------
+# Deprecated Policy Detection
+# ------------------------------------------------------------
+
+$DeprecatedSettings =
+    Get-DeprecatedPolicyMatches `
+        -Settings $AllSettings
+
+# ------------------------------------------------------------
 # Missing Matrix
 # ------------------------------------------------------------
 
-$AllGPOs =
-    $AllSettings.GPOName |
-    Sort-Object -Unique
+$Matrix = @()
 
-$Matrix =
 foreach ($Key in $NameMap.Keys)
 {
     $Items = $NameMap[$Key]
@@ -416,11 +533,11 @@ foreach ($Key in $NameMap.Keys)
         $Row[$Item.GPOName] = "Present"
     }
 
-    [PSCustomObject]$Row
+    $Matrix += [PSCustomObject]$Row
 }
 
 # ------------------------------------------------------------
-# Intune Migration Candidates
+# Migration Candidates
 # ------------------------------------------------------------
 
 $MigrationCandidates =
@@ -433,6 +550,50 @@ Select-Object `
     SettingName,
     Value,
     State
+
+# ------------------------------------------------------------
+# Statistics
+# ------------------------------------------------------------
+
+$Statistics =
+    [PSCustomObject]@{
+
+        Timestamp =
+            Get-Date
+
+        XmlFiles =
+            $XmlFiles.Count
+
+        Settings =
+            $AllSettings.Count
+
+        FirewallRules =
+            $AllFirewall.Count
+
+        CommonSettings =
+            $CommonSettings.Count
+
+        CommonByName =
+            $CommonSettingsByName.Count
+
+        UniqueSettings =
+            $UniqueSettings.Count
+
+        Conflicts =
+            $ConflictingSettings.Count
+
+        Duplicates =
+            $DuplicateSettings.Count
+
+        Deprecated =
+            @($DeprecatedSettings).Count
+
+        Unclassified =
+            $AllUnclassified.Count
+
+        ParseFailures =
+            $Failures.Count
+    }
 
 # ------------------------------------------------------------
 # Export Reports
@@ -463,14 +624,14 @@ Export-Csv (
     Join-Path $OutputFolder "DuplicateSettings.csv"
 ) -NoTypeInformation
 
+$DeprecatedSettings |
+Export-Csv (
+    Join-Path $OutputFolder "DeprecatedPolicies.csv"
+) -NoTypeInformation
+
 $Matrix |
 Export-Csv (
     Join-Path $OutputFolder "MissingSettingsMatrix.csv"
-) -NoTypeInformation
-
-$AllFirewall |
-Export-Csv (
-    Join-Path $OutputFolder "FirewallRules.csv"
 ) -NoTypeInformation
 
 $MigrationCandidates |
@@ -478,10 +639,48 @@ Export-Csv (
     Join-Path $OutputFolder "IntuneMigrationCandidates.csv"
 ) -NoTypeInformation
 
-$AllUnclassified |
+$Statistics |
 Export-Csv (
-    Join-Path $OutputFolder "UnclassifiedSettings.csv"
+    Join-Path $OutputFolder "RunStatistics.csv"
 ) -NoTypeInformation
+
+# ------------------------------------------------------------
+# Validation
+# ------------------------------------------------------------
+
+$ExpectedReports = @(
+    "ParsedSettings.csv"
+    "CommonSettings.csv"
+    "CommonSettingsByName.csv"
+    "UniqueSettings.csv"
+    "ConflictingSettings.csv"
+    "DuplicateSettings.csv"
+    "DeprecatedPolicies.csv"
+    "MissingSettingsMatrix.csv"
+    "FirewallRules.csv"
+    "IntuneMigrationCandidates.csv"
+    "UnclassifiedSettings.csv"
+    "RunStatistics.csv"
+)
+
+Write-Host ""
+Write-Host "Generated Reports"
+Write-Host "-----------------"
+
+foreach ($Report in $ExpectedReports)
+{
+    $File =
+        Join-Path $OutputFolder $Report
+
+    if (Test-Path $File)
+    {
+        Write-Host "[OK] $Report"
+    }
+    else
+    {
+        Write-Warning "$Report missing"
+    }
+}
 
 # ------------------------------------------------------------
 # Summary
@@ -499,6 +698,7 @@ Write-Host "Unique            : $($UniqueSettings.Count)"
 Write-Host "Conflicting       : $($ConflictingSettings.Count)"
 Write-Host "Duplicate         : $($DuplicateSettings.Count)"
 Write-Host "Firewall Rules    : $($AllFirewall.Count)"
+Write-Host "Deprecated        : $(@($DeprecatedSettings).Count)"
 Write-Host "Unclassified      : $($AllUnclassified.Count)"
 Write-Host ""
 
