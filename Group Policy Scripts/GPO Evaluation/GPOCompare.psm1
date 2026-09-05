@@ -9,6 +9,10 @@ $script:Unclassified    = $null
 $script:ExcludeFirewallRulesFromComparison = $true
 $script:ASRRuleMap = @{}
 
+$script:DeprecatedPolicyReference = @{
+    Policies      = @()
+    RegistryPaths = @()
+}
 #==========================================================
 # Core Framework
 #==========================================================
@@ -416,12 +420,8 @@ function Get-PropertyValue {
 }
 
 function Get-XmlProperty {
-
-    [CmdletBinding()]
     param(
-        [AllowNull()]
         $Object,
-
         [string]$PropertyName
     )
 
@@ -431,9 +431,7 @@ function Get-XmlProperty {
     }
 
     $Property =
-        $Object.PSObject.Properties[
-            $PropertyName
-        ]
+        $Object.PSObject.Properties[$PropertyName]
 
     if ($null -ne $Property)
     {
@@ -456,13 +454,31 @@ function Get-SafeArray {
         return @()
     }
 
+    if ($Object -is [System.Collections.IEnumerable] -and
+        -not ($Object -is [string]))
+    {
+        return @($Object)
+    }
+
+    return @($Object)
+}
+
+<#function Get-SafeArray {
+    param($Object)
+
+    if ($null -eq $Object)
+    {
+        return @()
+    }
+
     if ($Object -is [System.Array])
     {
         return $Object
     }
 
     return @($Object)
-}
+}#>
+
 
 #==========================================================
 # Security Parser Sections
@@ -519,18 +535,104 @@ function Parse-AccountPolicies {
     )
 
     $Accounts =
-        @($Extension.Account)
+        Get-SafeArray (
+            Get-XmlProperty `
+                -Object $Extension `
+                -PropertyName 'Account'
+        )
 
     foreach ($Account in $Accounts)
     {
         $SettingName =
-            Get-CleanText $Account.Name
+            Get-CleanText (
+                Get-XmlProperty `
+                    -Object $Account `
+                    -PropertyName 'Name'
+            )
 
         $Category =
-            Get-CleanText $Account.Type
+            Get-CleanText (
+                Get-XmlProperty `
+                    -Object $Account `
+                    -PropertyName 'Type'
+            )
 
-        $Value =
-            Get-NodeValue $Account
+        $Value = $null
+
+        #
+        # Boolean
+        #
+
+        $BooleanValue =
+            Get-XmlProperty `
+                -Object $Account `
+                -PropertyName 'SettingBoolean'
+
+        if ($null -ne $BooleanValue)
+        {
+            $Value =
+                Convert-ToBooleanString `
+                    $BooleanValue
+        }
+
+        #
+        # Number
+        #
+
+        if (
+            [string]::IsNullOrWhiteSpace(
+                $Value
+            )
+        )
+        {
+            $NumberValue =
+                Get-XmlProperty `
+                    -Object $Account `
+                    -PropertyName 'SettingNumber'
+
+            if ($null -ne $NumberValue)
+            {
+                $Value =
+                    Get-CleanText `
+                        $NumberValue
+            }
+        }
+
+        #
+        # String
+        #
+
+        if (
+            [string]::IsNullOrWhiteSpace(
+                $Value
+            )
+        )
+        {
+            $StringValue =
+                Get-XmlProperty `
+                    -Object $Account `
+                    -PropertyName 'SettingString'
+
+            if ($null -ne $StringValue)
+            {
+                $Value =
+                    Get-CleanText `
+                        $StringValue
+            }
+        }
+
+        #
+        # Final fallback
+        #
+
+        if (
+            [string]::IsNullOrWhiteSpace(
+                $Value
+            )
+        )
+        {
+            $Value = "<NoValue>"
+        }
 
         Add-NormalizedSetting `
             -Result $Result `
@@ -610,6 +712,7 @@ function Parse-UserRightsAssignments {
             -State "Configured"
     }
 }
+
 function Parse-SecurityOptions {
 
     [CmdletBinding()]
@@ -623,8 +726,15 @@ function Parse-SecurityOptions {
         [string]$Class
     )
 
-    foreach ($Option in @($Extension.SecurityOptions))
-    {
+        $SecurityOptions =
+            Get-SafeArray (
+                Get-XmlProperty `
+                    -Object $Extension `
+                    -PropertyName 'SecurityOptions'
+            )
+
+        foreach ($Option in $SecurityOptions)
+        {
         #--------------------------------------------------
         # Determine Friendly Setting Name
         #--------------------------------------------------
@@ -956,13 +1066,28 @@ function Parse-SystemServices {
         [string]$Class
     )
 
-    foreach ($Service in @($Extension.SystemServices))
+    $SystemServices =
+        Get-SafeArray (
+            Get-XmlProperty `
+                -Object $Extension `
+                -PropertyName 'SystemServices'
+        )
+
+    foreach ($Service in $SystemServices)
     {
         $ServiceName =
-            Get-CleanText $Service.Name
+            Get-CleanText (
+                Get-XmlProperty `
+                    -Object $Service `
+                    -PropertyName 'Name'
+            )
 
         $StartupMode =
-            Get-CleanText $Service.StartupMode
+            Get-CleanText (
+                Get-XmlProperty `
+                    -Object $Service `
+                    -PropertyName 'StartupMode'
+            )
 
         Add-NormalizedSetting `
             -Result $Result `
@@ -975,46 +1100,38 @@ function Parse-SystemServices {
             -State "Configured"
 
         #
-        # Service ACL
+        # Optional ACL Collection
         #
 
-        if (
-            Test-Property `
+        $SecurityDescriptor =
+            Get-XmlProperty `
                 -Object $Service `
                 -PropertyName 'SecurityDescriptor'
-        )
-        {
-            $SecurityDescriptor =
-                $Service.SecurityDescriptor
 
-            if (
-                Test-Property `
+        if ($null -ne $SecurityDescriptor)
+        {
+            $Sddl =
+                Get-XmlProperty `
                     -Object $SecurityDescriptor `
                     -PropertyName 'SDDL'
+
+            if (
+                -not [string]::IsNullOrWhiteSpace($Sddl)
             )
             {
-                $Sddl =
-                    Get-CleanText `
-                        $SecurityDescriptor.SDDL
-
-                if (
-                    -not [string]::IsNullOrWhiteSpace(
-                        $Sddl
-                    )
-                )
-                {
-                    Add-NormalizedSetting `
-                        -Result $Result `
-                        -GPOName $GPOName `
-                        -Class $Class `
-                        -Extension "Security" `
-                        -Category "Service Permissions" `
-                        -SettingName (
-                            "$ServiceName ACL"
-                        ) `
-                        -Value $Sddl `
-                        -State "Configured"
-                }
+                Add-NormalizedSetting `
+                    -Result $Result `
+                    -GPOName $GPOName `
+                    -Class $Class `
+                    -Extension "Security" `
+                    -Category "Service Permissions" `
+                    -SettingName (
+                        "$ServiceName ACL"
+                    ) `
+                    -Value (
+                        Get-CleanText $Sddl
+                    ) `
+                    -State "Configured"
             }
         }
     }
@@ -1022,7 +1139,6 @@ function Parse-SystemServices {
 #==========================================================
 # Advanced Audit Policy Parser
 #==========================================================
-
 function Parse-AdvancedAuditPolicies {
 
     [CmdletBinding()]
@@ -1037,7 +1153,11 @@ function Parse-AdvancedAuditPolicies {
     )
 
     $AuditSettings =
-        @($Extension.AuditSetting)
+        Get-SafeArray (
+            Get-XmlProperty `
+                -Object $Extension `
+                -PropertyName 'AuditSetting'
+        )
 
     foreach ($Audit in $AuditSettings)
     {
@@ -1174,7 +1294,14 @@ function Parse-AdministrativeTemplates {
         [string]$Class
     )
 
-    foreach ($Policy in @($Extension.Policy))
+    $Policies =
+        Get-SafeArray (
+            Get-XmlProperty `
+                -Object $Extension `
+                -PropertyName 'Policy'
+        )
+
+    foreach ($Policy in $Policies)
     {
         Parse-AdministrativeTemplatePolicy `
             -Result $Result `
@@ -1248,319 +1375,203 @@ function Get-AdministrativeTemplateValue {
         $Policy
     )
 
-    $Values =
-        New-Object System.Collections.ArrayList
+    $Values = [System.Collections.ArrayList]::new()
 
-    # --------------------------------------------------
+    #
     # CheckBox
-    # --------------------------------------------------
+    #
 
-    foreach (
-        $Item in
-        (Get-SafeArray (
-            Get-XmlProperty `
-                -Object $Policy `
-                -PropertyName 'CheckBox'
-        ))
-    )
+    foreach ($Item in (Get-SafeArray (Get-XmlProperty $Policy 'CheckBox')))
     {
         [void]$Values.Add(
-            (
-                "{0}={1}" -f
-                (Get-CleanText $Item.Name),
-                (Get-CleanText $Item.State)
-            )
+            ("{0}={1}" -f
+                (Get-CleanText (Get-XmlProperty $Item 'Name')),
+                (Get-CleanText (Get-XmlProperty $Item 'State')))
         )
     }
 
-    # --------------------------------------------------
+    #
     # EditText
-    # --------------------------------------------------
+    #
 
-    foreach (
-        $Item in
-        (Get-SafeArray (
-            Get-XmlProperty `
-                -Object $Policy `
-                -PropertyName 'EditText'
-        ))
-    )
+    foreach ($Item in (Get-SafeArray (Get-XmlProperty $Policy 'EditText')))
     {
-        $ItemValue = ""
-
-        if (
-            Test-Property `
-                -Object $Item `
-                -PropertyName 'Value'
-        )
-        {
-            $ItemValue =
-                Get-CleanText $Item.Value
-        }
-
         [void]$Values.Add(
-            (
-                "{0}={1}" -f
-                (Get-CleanText $Item.Name),
-                $ItemValue
-            )
+            ("{0}={1}" -f
+                (Get-CleanText (Get-XmlProperty $Item 'Name')),
+                (Get-CleanText (Get-XmlProperty $Item 'Value')))
         )
     }
 
-    # --------------------------------------------------
+    #
     # Numeric
-    # --------------------------------------------------
+    #
 
-    foreach (
-        $Item in
-        (Get-SafeArray (
-            Get-XmlProperty `
-                -Object $Policy `
-                -PropertyName 'Numeric'
-        ))
-    )
+    foreach ($Item in (Get-SafeArray (Get-XmlProperty $Policy 'Numeric')))
     {
-        $ItemValue = ""
-
-        if (
-            Test-Property `
-                -Object $Item `
-                -PropertyName 'Value'
-        )
-        {
-            $ItemValue =
-                Get-CleanText $Item.Value
-        }
-
         [void]$Values.Add(
-            (
-                "{0}={1}" -f
-                (Get-CleanText $Item.Name),
-                $ItemValue
-            )
+            ("{0}={1}" -f
+                (Get-CleanText (Get-XmlProperty $Item 'Name')),
+                (Get-CleanText (Get-XmlProperty $Item 'Value')))
         )
     }
 
-    # --------------------------------------------------
+    #
     # DropDownList
-    # --------------------------------------------------
+    #
 
-    foreach (
-        $Item in
-        (Get-SafeArray (
-            Get-XmlProperty `
-                -Object $Policy `
-                -PropertyName 'DropDownList'
-        ))
-    )
+    foreach ($Item in (Get-SafeArray (Get-XmlProperty $Policy 'DropDownList')))
     {
         $SelectedValue = ""
 
-        if (
-            Test-Property `
-                -Object $Item `
-                -PropertyName 'Value'
-        )
+        $ValueNode =
+            Get-XmlProperty $Item 'Value'
+
+        if ($null -ne $ValueNode)
         {
-            if (
-                Test-Property `
-                    -Object $Item.Value `
-                    -PropertyName 'Name'
-            )
-            {
-                $SelectedValue =
-                    Get-CleanText $Item.Value.Name
-            }
+            $SelectedValue =
+                Get-CleanText (
+                    Get-XmlProperty `
+                        $ValueNode `
+                        'Name'
+                )
         }
 
-        if (
-            [string]::IsNullOrWhiteSpace(
-                $SelectedValue
-            )
-        )
+        if ([string]::IsNullOrWhiteSpace($SelectedValue))
         {
-            if (
-                Test-Property `
-                    -Object $Item `
-                    -PropertyName 'State'
-            )
-            {
-                $SelectedValue =
-                    Get-CleanText $Item.State
-            }
+            $SelectedValue =
+                Get-CleanText (
+                    Get-XmlProperty `
+                        $Item `
+                        'State'
+                )
         }
 
         [void]$Values.Add(
-            (
-                "{0}={1}" -f
-                (Get-CleanText $Item.Name),
-                $SelectedValue
-            )
+            ("{0}={1}" -f
+                (Get-CleanText (Get-XmlProperty $Item 'Name')),
+                $SelectedValue)
         )
     }
 
-    # --------------------------------------------------
+    #
     # ListBox
-    # --------------------------------------------------
+    #
 
-    foreach (
-        $ListBox in
-        (Get-SafeArray (
-            Get-XmlProperty `
-                -Object $Policy `
-                -PropertyName 'ListBox'
-        ))
-    )
+    foreach ($ListBox in (Get-SafeArray (Get-XmlProperty $Policy 'ListBox')))
     {
         $Entries = @()
 
-        if (
-            Test-Property `
-                -Object $ListBox `
-                -PropertyName 'Value'
-        )
+        $ValueNode =
+            Get-XmlProperty `
+                $ListBox `
+                'Value'
+
+        $Elements =
+            Get-SafeArray (
+                Get-XmlProperty `
+                    $ValueNode `
+                    'Element'
+            )
+
+        foreach ($Element in $Elements)
         {
+            $Name =
+                Get-CleanText (
+                    Get-XmlProperty `
+                        $Element `
+                        'Name'
+                )
+
+            $Data =
+                Get-CleanText (
+                    Get-XmlProperty `
+                        $Element `
+                        'Data'
+                )
+
+            #
+            # Optional ASR translation
+            #
+
             if (
-                Test-Property `
-                    -Object $ListBox.Value `
-                    -PropertyName 'Element'
+                (Get-Variable `
+                    -Name ASRRuleMap `
+                    -Scope Script `
+                    -ErrorAction SilentlyContinue
+                ) -and
+                $script:ASRRuleMap.ContainsKey($Name)
             )
             {
-                foreach (
-                    $Element in
-                    (Get-SafeArray $ListBox.Value.Element)
-                )
-                {
-                    $Name = ""
-                    $Data = ""
+                $Name =
+                    $script:ASRRuleMap[$Name]
+            }
 
-                    if (
-                        Test-Property `
-                            -Object $Element `
-                            -PropertyName 'Name'
-                    )
-                    {
-                        $Name =
-                            Get-CleanText $Element.Name
-                    }
-
-                    if (
-                        Test-Property `
-                            -Object $Element `
-                            -PropertyName 'Data'
-                    )
-                    {
-                        $Data =
-                            Get-CleanText $Element.Data
-                    }
-
-                    if (
-                        $script:ASRRuleMap -and
-                        $script:ASRRuleMap.ContainsKey($Name)
-                    )
-                    {
-                        $Name =
-                            $script:ASRRuleMap[$Name]
-                    }
-
-                    if (
-                        -not [string]::IsNullOrWhiteSpace($Name) -and
-                        -not [string]::IsNullOrWhiteSpace($Data)
-                    )
-                    {
-                        $Entries += (
-                            "{0}={1}" -f
-                            $Name,
-                            $Data
-                        )
-                    }
-                    elseif (
-                        -not [string]::IsNullOrWhiteSpace($Data)
-                    )
-                    {
-                        $Entries += $Data
-                    }
-                }
+            if (
+                -not [string]::IsNullOrWhiteSpace($Name) -and
+                -not [string]::IsNullOrWhiteSpace($Data)
+            )
+            {
+                $Entries += ("{0}={1}" -f $Name,$Data)
+            }
+            elseif (
+                -not [string]::IsNullOrWhiteSpace($Data)
+            )
+            {
+                $Entries += $Data
             }
         }
 
-        if (
-            (Get-SafeArray $Entries).Count -gt 0
-        )
+        if (@($Entries).Count -gt 0)
         {
             [void]$Values.Add(
-                (
-                    "{0}={1}" -f
-                    (Get-CleanText $ListBox.Name),
-                    ($Entries -join "; ")
-                )
+                ("{0}={1}" -f
+                    (Get-CleanText (Get-XmlProperty $ListBox 'Name')),
+                    ($Entries -join '; '))
             )
         }
     }
 
-    # --------------------------------------------------
+    #
     # MultiText
-    # --------------------------------------------------
+    #
 
-    foreach (
-        $Item in
-        (Get-SafeArray (
-            Get-XmlProperty `
-                -Object $Policy `
-                -PropertyName 'MultiText'
-        ))
-    )
+    foreach ($Item in (Get-SafeArray (Get-XmlProperty $Policy 'MultiText')))
     {
-        $Entries = @()
+        $Entries =
+            (Get-SafeArray (
+                Get-XmlProperty `
+                    $Item `
+                    'Value'
+            )) |
+            ForEach-Object {
+                Get-CleanText $_
+            }
 
-        if (
-            Test-Property `
-                -Object $Item `
-                -PropertyName 'Value'
-        )
-        {
-            $Entries =
-                (Get-SafeArray $Item.Value) |
-                ForEach-Object {
-                    Get-CleanText $_
-                }
-        }
-
-        if (
-            (Get-SafeArray $Entries).Count -gt 0
-        )
+        if (@($Entries).Count -gt 0)
         {
             [void]$Values.Add(
-                (
-                    "{0}={1}" -f
-                    (Get-CleanText $Item.Name),
-                    ($Entries -join "; ")
-                )
+                ("{0}={1}" -f
+                    (Get-CleanText (Get-XmlProperty $Item 'Name')),
+                    ($Entries -join '; '))
             )
         }
     }
 
-    # --------------------------------------------------
+    #
     # Text
-    # --------------------------------------------------
+    #
 
-    foreach (
-        $Item in
-        (Get-SafeArray (
-            Get-XmlProperty `
-                -Object $Policy `
-                -PropertyName 'Text'
-        ))
-    )
+    foreach ($Item in (Get-SafeArray (Get-XmlProperty $Policy 'Text')))
     {
         $TextValue =
-            Get-CleanText $Item.Name
-
-        if (
-            -not [string]::IsNullOrWhiteSpace(
-                $TextValue
+            Get-CleanText (
+                Get-XmlProperty `
+                    $Item `
+                    'Name'
             )
-        )
+
+        if (-not [string]::IsNullOrWhiteSpace($TextValue))
         {
             [void]$Values.Add(
                 "Text=$TextValue"
@@ -1568,18 +1579,50 @@ function Get-AdministrativeTemplateValue {
         }
     }
 
-    # --------------------------------------------------
-    # Final Result
-    # --------------------------------------------------
+    #
+    # Unknown Child Nodes
+    #
+
+    foreach ($Child in (Get-SafeArray $Policy.ChildNodes))
+    {
+        if ($Child.Name -in @(
+            'Name',
+            'State',
+            'Explain',
+            'Supported',
+            'Category',
+            'CheckBox',
+            'EditText',
+            'Numeric',
+            'DropDownList',
+            'ListBox',
+            'MultiText',
+            'Text'
+        ))
+        {
+            continue
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($Child.InnerText))
+        {
+            [void]$Values.Add(
+                ("{0}={1}" -f
+                    $Child.Name,
+                    (Get-CleanText $Child.InnerText))
+            )
+        }
+    }
+
+    #
+    # No values found
+    #
 
     if ($Values.Count -eq 0)
     {
         return "<NoPolicyOptions>"
     }
 
-    return (
-        $Values -join " | "
-    )
+    return ($Values -join " | ")
 }
 
 #===========================================================
@@ -1630,43 +1673,126 @@ function Parse-RegistrySetting {
     )
 
     $KeyPath =
-        Get-CleanText $RegistryEntry.KeyPath
+        Get-CleanText (
+            Get-XmlProperty `
+                -Object $RegistryEntry `
+                -PropertyName 'KeyPath'
+        )
+
+    $ValueNode =
+        Get-XmlProperty `
+            -Object $RegistryEntry `
+            -PropertyName 'Value'
+
+    if ($null -eq $ValueNode)
+    {
+        return
+    }
 
     $SettingName =
-        Get-CleanText $RegistryEntry.Value.Name
+        Get-CleanText (
+            Get-XmlProperty `
+                -Object $ValueNode `
+                -PropertyName 'Name'
+        )
 
     $Value = $null
 
-    if ($RegistryEntry.Value.Number)
+    #
+    # Number
+    #
+
+    $Number =
+        Get-XmlProperty `
+            -Object $ValueNode `
+            -PropertyName 'Number'
+
+    if ($null -ne $Number)
     {
         $Value =
-            Get-CleanText `
-                $RegistryEntry.Value.Number
-    }
-    elseif ($RegistryEntry.Value.String)
-    {
-        $Value =
-            Get-CleanText `
-                $RegistryEntry.Value.String
-    }
-    elseif ($RegistryEntry.Value.Binary)
-    {
-        $Value =
-            Get-CleanText `
-                $RegistryEntry.Value.Binary
-    }
-    elseif ($RegistryEntry.Value.MultiString)
-    {
-        $Value =
-            (
-                @($RegistryEntry.Value.MultiString) |
-                ForEach-Object {
-                    Get-CleanText $_
-                }
-            ) -join "; "
+            Get-CleanText $Number
     }
 
-    if ([string]::IsNullOrWhiteSpace($Value))
+    #
+    # String
+    #
+
+    if (
+        [string]::IsNullOrWhiteSpace(
+            $Value
+        )
+    )
+    {
+        $String =
+            Get-XmlProperty `
+                -Object $ValueNode `
+                -PropertyName 'String'
+
+        if ($null -ne $String)
+        {
+            $Value =
+                Get-CleanText $String
+        }
+    }
+
+    #
+    # Binary
+    #
+
+    if (
+        [string]::IsNullOrWhiteSpace(
+            $Value
+        )
+    )
+    {
+        $Binary =
+            Get-XmlProperty `
+                -Object $ValueNode `
+                -PropertyName 'Binary'
+
+        if ($null -ne $Binary)
+        {
+            $Value =
+                Get-CleanText $Binary
+        }
+    }
+
+    #
+    # MultiString
+    #
+
+    if (
+        [string]::IsNullOrWhiteSpace(
+            $Value
+        )
+    )
+    {
+        $MultiString =
+            Get-XmlProperty `
+                -Object $ValueNode `
+                -PropertyName 'MultiString'
+
+        if ($null -ne $MultiString)
+        {
+            $Value =
+                (
+                    Get-SafeArray $MultiString |
+                    ForEach-Object {
+                        Get-CleanText $_
+                    }
+                ) -join "; "
+        }
+    }
+
+    #
+    # Fallback
+    #
+
+    if (
+        [string]::IsNullOrWhiteSpace(
+            $Value
+        )
+    )
     {
         $Value = "<NoValue>"
     }
@@ -2359,9 +2485,118 @@ function Parse-NRPTRule {
         -State "Configured"
 }
 
-#==========================================================
+#=====================================================
+# Deprecated Rules Parsers
+#=====================================================
+
+function Import-DeprecatedPolicyReference {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $Policies      = @()
+    $RegistryPaths = @()
+
+    if (-not (Test-Path $Path))
+    {
+        Write-Warning "Deprecated policy file not found: $Path"
+
+        $script:DeprecatedPolicyReference = @{
+            Policies      = @()
+            RegistryPaths = @()
+        }
+
+        return
+    }
+
+    foreach ($Line in (Get-Content $Path))
+    {
+        $CurrentLine = $Line.Trim()
+
+        if ([string]::IsNullOrWhiteSpace($CurrentLine))
+        {
+            continue
+        }
+
+        if ($CurrentLine.StartsWith("- "))
+        {
+            $Value = $CurrentLine.Substring(2)
+
+            if ($Value -match '^Software\\')
+            {
+                $RegistryPaths += $Value
+            }
+            else
+            {
+                $Policies += $Value
+            }
+        }
+    }
+
+    $script:DeprecatedPolicyReference = @{
+        Policies      = $Policies
+        RegistryPaths = $RegistryPaths
+    }
+}
+
+function Get-DeprecatedPolicyMatches {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [System.Collections.IEnumerable]$Settings
+    )
+
+    foreach ($Setting in $Settings)
+    {
+        if (
+            $script:DeprecatedPolicyReference.Policies `
+                -contains `
+                $Setting.SettingName
+        )
+        {
+            [PSCustomObject]@{
+                GPOName     = $Setting.GPOName
+                Class       = $Setting.Class
+                Category    = $Setting.Category
+                SettingName = $Setting.SettingName
+                Value       = $Setting.Value
+                Reason      = "Deprecated Policy"
+            }
+
+            continue
+        }
+
+        foreach (
+            $RegistryPath in
+            $script:DeprecatedPolicyReference.RegistryPaths
+        )
+        {
+            if (
+                $Setting.Category -like "*$RegistryPath*"
+            )
+            {
+                [PSCustomObject]@{
+                    GPOName     = $Setting.GPOName
+                    Class       = $Setting.Class
+                    Category    = $Setting.Category
+                    SettingName = $Setting.SettingName
+                    Value       = $Setting.Value
+                    Reason      = "Deprecated Registry Technology"
+                }
+
+                break
+            }
+        }
+    }
+}
+
+#=====================================================
 # Extension Discovery Wrappers
-#==========================================================
+#=====================================================
 
 function Invoke-SecurityParser {
 
@@ -2536,9 +2771,9 @@ function Invoke-NRPTParser {
         -Class $Class
 }
 
-#==========================================================
+#=====================================================
 # Main Orchestration
-#==========================================================
+#=====================================================
 
 function Invoke-GPOSectionParser {
 
@@ -2553,87 +2788,86 @@ function Invoke-GPOSectionParser {
         [string]$GPOName
     )
 
-    foreach ($ExtensionData in @($Section.ExtensionData))
+    $ExtensionDataCollection =
+        Get-SafeArray (
+            Get-XmlProperty `
+                -Object $Section `
+                -PropertyName 'ExtensionData'
+        )
+
+    foreach ($ExtensionData in $ExtensionDataCollection)
     {
-        if (-not $ExtensionData)
+        if ($null -eq $ExtensionData)
         {
             continue
         }
 
         $ExtensionName =
-            Get-CleanText `
-                $ExtensionData.Name
+            Get-CleanText (
+                Get-XmlProperty `
+                    -Object $ExtensionData `
+                    -PropertyName 'Name'
+            )
 
-        $Extension = $null
-
-        if (Test-Property -Object $ExtensionData -PropertyName 'Extension')
-            {
-            $Extension = $ExtensionData.Extension
-            }
+        $Extension =
+            Get-XmlProperty `
+                -Object $ExtensionData `
+                -PropertyName 'Extension'
 
         switch ($ExtensionName)
         {
-            "Security"
-            {
-                Invoke-SecurityParser `
-                    -Result $Result `
-                    -Section $Section `
-                    -Class $Class `
-                    -GPOName $GPOName
-            }
-
-            "Advanced Audit Configuration"
-            {
-                Invoke-AuditParser `
-                    -Result $Result `
-                    -Section $Section `
-                    -Class $Class `
-                    -GPOName $GPOName
-            }
-
-            "Registry"
-            {
-                Invoke-RegistryParser `
-                    -Result $Result `
-                    -Section $Section `
-                    -Class $Class `
-                    -GPOName $GPOName
-            }
-
-            "Windows Firewall"
-            {
-                Invoke-FirewallParser `
-                    -Result $Result `
-                    -Section $Section `
-                    -Class $Class `
-                    -GPOName $GPOName
-            }
-
-            "Local Users and Groups"
-            {
-                Invoke-LUGParser `
-                    -Result $Result `
-                    -Section $Section `
-                    -Class $Class `
-                    -GPOName $GPOName
-            }
-
-            "Name Resolution Policy"
-            {
-                Invoke-NRPTParser `
+            "Security" {
+                Parse-SecuritySettings `
                     -Result $Result `
                     -Extension $Extension `
                     -GPOName $GPOName `
                     -Class $Class
             }
 
-            default
-            {
-                Parse-UnknownExtension `
+            "Advanced Audit Configuration" {
+                Parse-AdvancedAuditPolicies `
                     -Result $Result `
-                    -ExtensionData $ExtensionData `
-                    -Class $Class `
-                    -GPOName $GPOName
+                    -Extension $Extension `
+                    -GPOName $GPOName `
+                    -Class $Class
+            }
+
+            "Registry" {
+                Parse-AdministrativeTemplates `
+                    -Result $Result `
+                    -Extension $Extension `
+                    -GPOName $GPOName `
+                    -Class $Class
+
+                Parse-RegistrySettings `
+                    -Result $Result `
+                    -Extension $Extension `
+                    -GPOName $GPOName `
+                    -Class $Class
+            }
+
+            "Windows Firewall" {
+                Parse-WindowsFirewall `
+                    -Result $Result `
+                    -Extension $Extension `
+                    -GPOName $GPOName `
+                    -Class $Class
+            }
+
+            "Local Users and Groups" {
+                Parse-LocalUsersAndGroups `
+                    -Result $Result `
+                    -Extension $Extension `
+                    -GPOName $GPOName `
+                    -Class $Class
+            }
+
+            "Name Resolution Policy" {
+                Parse-NRPT `
+                    -Result $Result `
+                    -Extension $Extension `
+                    -GPOName $GPOName `
+                    -Class $Class
             }
         }
     }
@@ -2839,5 +3073,7 @@ function Get-GPOSettingsFromXml {
 }#>
 
 Export-ModuleMember -Function @(
-    'Get-GPOSettingsFromXml'
+    'Get-GPOSettingsFromXml',
+    'Import-DeprecatedPolicyReference',
+    'Get-DeprecatedPolicyMatches'
 )
