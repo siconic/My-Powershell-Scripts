@@ -182,10 +182,9 @@
 
 .VERSION
 
-    1.2
+    2.1
 
 #>
-
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
@@ -194,10 +193,50 @@ param(
     [Parameter(Mandatory)]
     [string]$OutputFolder,
 
-    [string]$ModulePath = ".\GPOCompare.psm1"
+    [string]$ModulePath = ".\GPOCompare-v3.psm1",
+    [string]$IntuneMappingPath = (Join-Path $PSScriptRoot "intunemapping.json")
 )
 
 $ErrorActionPreference = "Stop"
+
+# ------------------------------------------------------------
+# Intune Mapping
+# ------------------------------------------------------------
+function Import-IntuneMapping {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { throw "Intune mapping file not found: $Path" }
+    try { $Catalog = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw "Failed to load Intune mapping file '$Path': $($_.Exception.Message)" }
+    if ($null -eq $Catalog.mappings) { throw "Invalid Intune mapping file: missing 'mappings' array." }
+    return $Catalog
+}
+function Test-IntuneMappingField {
+    param([AllowNull()][object]$Expected,[AllowNull()][object]$Actual)
+    if ($null -eq $Expected -or [string]::IsNullOrWhiteSpace([string]$Expected) -or [string]$Expected -eq '*') { return $true }
+    return ([string]$Expected -ieq [string]$Actual)
+}
+function Get-IntuneMapping {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Setting,[Parameter(Mandatory)][object]$Catalog)
+    $Candidates = foreach ($Map in @($Catalog.mappings)) {
+        if ((Test-IntuneMappingField $Map.class $Setting.Class) -and
+            (Test-IntuneMappingField $Map.extension $Setting.Extension) -and
+            (Test-IntuneMappingField $Map.category $Setting.Category) -and
+            (Test-IntuneMappingField $Map.settingName $Setting.SettingName)) {
+            $Specificity = 0
+            foreach ($Field in @('class','extension','category','settingName')) {
+                $V=[string]$Map.$Field
+                if (-not [string]::IsNullOrWhiteSpace($V) -and $V -ne '*') { $Specificity++ }
+            }
+            [PSCustomObject]@{ Mapping=$Map; Specificity=$Specificity }
+        }
+    }
+    $Best=$Candidates | Sort-Object Specificity -Descending | Select-Object -First 1
+    if ($null -eq $Best) { return $null }
+    return $Best.Mapping
+}
+$IntuneMappingCatalog = Import-IntuneMapping -Path $IntuneMappingPath
 
 # ------------------------------------------------------------
 # Validation
@@ -537,20 +576,21 @@ foreach ($Key in $NameMap.Keys)
 }
 
 # ------------------------------------------------------------
-# Migration Candidates
+# Migration Candidates + Intune Mapping
 # ------------------------------------------------------------
-
-$MigrationCandidates =
-$AllSettings |
-Select-Object `
-    GPOName,
-    Class,
-    Extension,
-    Category,
-    SettingName,
-    Value,
-    State
-
+$MigrationCandidates = foreach ($Setting in $AllSettings) {
+    $Map = Get-IntuneMapping -Setting $Setting -Catalog $IntuneMappingCatalog
+    [PSCustomObject]@{
+        GPOName=$Setting.GPOName; Class=$Setting.Class; Extension=$Setting.Extension; Category=$Setting.Category
+        SettingName=$Setting.SettingName; GPOValue=$Setting.Value; GPOState=$Setting.State
+        IntuneType=if ($null -ne $Map) { $Map.intuneType } else { $null }
+        IntuneSetting=if ($null -ne $Map) { $Map.intuneSetting } else { $null }
+        OMAURI=if ($null -ne $Map) { $Map.omaUri } else { $null }
+        MappingStatus=if ($null -ne $Map) { $Map.mappingStatus } else { 'Unmapped' }
+        Confidence=if ($null -ne $Map) { $Map.confidence } else { 'None' }
+        Notes=if ($null -ne $Map) { $Map.notes } else { 'No matching entry in intunemapping.json.' }
+    }
+}
 # ------------------------------------------------------------
 # Statistics
 # ------------------------------------------------------------
@@ -690,16 +730,6 @@ Write-Host ""
 Write-Host "====================================="
 Write-Host "Report Generation Complete"
 Write-Host "====================================="
-Write-Host ""
-
-Write-Host "Common Exact      : $($CommonSettings.Count)"
-Write-Host "Common By Name    : $($CommonSettingsByName.Count)"
-Write-Host "Unique            : $($UniqueSettings.Count)"
-Write-Host "Conflicting       : $($ConflictingSettings.Count)"
-Write-Host "Duplicate         : $($DuplicateSettings.Count)"
-Write-Host "Firewall Rules    : $($AllFirewall.Count)"
-Write-Host "Deprecated        : $(@($DeprecatedSettings).Count)"
-Write-Host "Unclassified      : $($AllUnclassified.Count)"
 Write-Host ""
 
 Write-Host "Reports written to:"
