@@ -193,7 +193,7 @@ param(
     [Parameter(Mandatory)]
     [string]$OutputFolder,
 
-    [string]$ModulePath = ".\GPOCompare-v3.psm1",
+    [string]$ModulePath = ".\GPOCompare.psm1",
     [string]$IntuneMappingPath = (Join-Path $PSScriptRoot "intunemapping.json")
 )
 
