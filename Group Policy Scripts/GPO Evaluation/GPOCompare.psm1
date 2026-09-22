@@ -1,19 +1,14 @@
 #==========================================================
-# Version 2.1
+# Version 3.0
 #
 # Module Globals
 #==========================================================
 Set-StrictMode -Version Latest
 
-$script:Settings        = $null
-$script:FirewallRules   = $null
-$script:Unclassified    = $null
-$script:ExcludeFirewallRulesFromComparison = $true
 $script:ASRRuleMap = @{}
 
 $script:DeprecatedPolicyReference = @{
-    Policies      = @()
-    RegistryPaths = @()
+    Entries = @()
 }
 #==========================================================
 # Core Framework
@@ -44,17 +39,18 @@ function Get-CleanText {
         return ""
     }
 
-    $Value =
-        $Text.ToString()
+    # XML nodes: use their text content. ToString() on an XmlElement that has
+    # attributes or child nodes returns the type name instead of the text.
+    if ($Text -is [System.Xml.XmlNode])
+    {
+        $Value = $Text.InnerText
+    }
+    else
+    {
+        $Value = $Text.ToString()
+    }
 
-    $Value =
-        $Value -replace '\r',' '
-
-    $Value =
-        $Value -replace '\n',' '
-
-    $Value =
-        $Value -replace '\s+',' '
+    $Value = $Value -replace '\s+',' '
 
     $Value.Trim()
 }
@@ -77,123 +73,6 @@ function Convert-ToBooleanString {
         "true"  { return "True" }
         "false" { return "False" }
         default { return $Value.ToString() }
-    }
-}
-
-function Get-NodeValue {
-
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        $Node
-    )
-
-    if (
-        Test-Property `
-            $Node `
-            'SettingBoolean'
-    )
-    {
-        return (
-            Get-CleanText `
-                $Node.SettingBoolean
-        )
-    }
-
-    if (
-        Test-Property `
-            $Node `
-            'SettingNumber'
-    )
-    {
-        return (
-            Get-CleanText `
-                $Node.SettingNumber
-        )
-    }
-
-    if (
-        Test-Property `
-            $Node `
-            'SettingString'
-    )
-    {
-        return (
-            Get-CleanText `
-                $Node.SettingString
-        )
-    }
-
-    if (
-        Test-Property `
-            $Node `
-            'SettingStrings'
-    )
-    {
-        return (
-            @($Node.SettingStrings.Value) |
-            ForEach-Object {
-                Get-CleanText $_
-            }
-        ) -join "; "
-    }
-
-    if (
-        Test-Property `
-            $Node `
-            'SettingValue'
-    )
-    {
-        return (
-            Get-CleanText `
-                $Node.SettingValue
-        )
-    }
-
-    return (
-        Get-CleanText `
-            $Node.InnerText
-    )
-}
-
-function Get-NodeState {
-
-    [CmdletBinding()]
-    param(
-        [AllowNull()]
-        $Node
-    )
-
-    if ($null -eq $Node)
-    {
-        return "Configured"
-    }
-
-    if ($Node.State)
-    {
-        return (
-            Get-CleanText `
-                $Node.State
-        )
-    }
-
-    return "Configured"
-}
-
-function Convert-AuditValue {
-
-    [CmdletBinding()]
-    param(
-        [int]$Value
-    )
-
-    switch ($Value)
-    {
-        0 { "No Auditing" }
-        1 { "Success" }
-        2 { "Failure" }
-        3 { "Success and Failure" }
-        default { $Value }
     }
 }
 
@@ -227,6 +106,35 @@ function New-GPOSetting {
     }
 }
 
+function New-UnclassifiedRecord {
+
+    [CmdletBinding()]
+    param(
+        [string]$GPOName,
+        [string]$Class,
+        [string]$Extension,
+        [string]$Category,
+        [string]$SettingName,
+        [string]$Value,
+        [string]$State,
+
+        [Parameter(Mandatory)]
+        [string]$Reason
+    )
+
+    # Single schema for every Unclassified record so Export-Csv keeps all columns.
+    [PSCustomObject]@{
+        GPOName     = $GPOName
+        Class       = $Class
+        Extension   = $Extension
+        Category    = $Category
+        SettingName = $SettingName
+        Value       = $Value
+        State       = $State
+        Reason      = $Reason
+    }
+}
+
 function Add-NormalizedSetting {
 
     [CmdletBinding()]
@@ -235,46 +143,33 @@ function Add-NormalizedSetting {
         [ref]$Result,
 
         [string]$GPOName,
-
         [string]$Class,
-
         [string]$Extension,
-
         [string]$Category,
-
         [string]$SettingName,
-
         [string]$Value,
-
         [string]$State
     )
 
-    $SettingName =
-        Get-CleanText $SettingName
-
-    $Value =
-        Get-CleanText $Value
-
-    $State =
-        Get-CleanText $State
-
-    $Category =
-        Get-CleanText $Category
-
-    $Extension =
-        Get-CleanText $Extension
+    $SettingName = Get-CleanText $SettingName
+    $Value       = Get-CleanText $Value
+    $State       = Get-CleanText $State
+    $Category    = Get-CleanText $Category
+    $Extension   = Get-CleanText $Extension
 
     if ([string]::IsNullOrWhiteSpace($SettingName))
     {
         [void]$Result.Value.Unclassified.Add(
-            [PSCustomObject]@{
-                GPOName   = $GPOName
-                Extension = $Extension
-                Category  = $Category
-                Value     = $Value
-                State     = $State
-                Reason    = "Missing Setting Name"
-            }
+            (
+                New-UnclassifiedRecord `
+                    -GPOName $GPOName `
+                    -Class $Class `
+                    -Extension $Extension `
+                    -Category $Category `
+                    -Value $Value `
+                    -State $State `
+                    -Reason "Missing Setting Name"
+            )
         )
 
         return
@@ -314,61 +209,6 @@ function Add-NormalizedSetting {
     )
 }
 
-function Add-FirewallRule {
-
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [ref]$Result,
-
-        [string]$GPOName,
-
-        [string]$Profile,
-
-        [string]$Name,
-
-        [string]$Action,
-
-        [string]$Direction,
-
-        [string]$Application,
-
-        [string]$Protocol
-    )
-
-    [void]$Result.Value.FirewallRules.Add(
-        [PSCustomObject]@{
-            GPOName     = $GPOName
-            Profile     = $Profile
-            Name        = $Name
-            Action      = $Action
-            Direction   = $Direction
-            Application = $Application
-            Protocol    = $Protocol
-        }
-    )
-}
-
-function New-GPONamespaceManager {
-
-    [CmdletBinding()]
-    param(
-        [xml]$Xml
-    )
-
-    $Ns =
-        New-Object System.Xml.XmlNamespaceManager(
-            $Xml.NameTable
-        )
-
-    $Ns.AddNamespace(
-        "gp",
-        "http://www.microsoft.com/GroupPolicy/Settings"
-    )
-
-    return $Ns
-}
-
 function Test-Property {
 
     [CmdletBinding()]
@@ -396,29 +236,6 @@ function Test-Property {
     {
         return $false
     }
-}
-
-function Get-PropertyValue {
-
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        $Object,
-
-        [Parameter(Mandatory)]
-        [string]$PropertyName
-    )
-
-    if (
-        Test-Property `
-            -Object $Object `
-            -PropertyName $PropertyName
-    )
-    {
-        return $Object.$PropertyName
-    }
-
-    return $null
 }
 
 function Get-XmlProperty {
@@ -456,31 +273,8 @@ function Get-SafeArray {
         return @()
     }
 
-    if ($Object -is [System.Collections.IEnumerable] -and
-        -not ($Object -is [string]))
-    {
-        return @($Object)
-    }
-
     return @($Object)
 }
-
-<#function Get-SafeArray {
-    param($Object)
-
-    if ($null -eq $Object)
-    {
-        return @()
-    }
-
-    if ($Object -is [System.Array])
-    {
-        return $Object
-    }
-
-    return @($Object)
-}#>
-
 
 #==========================================================
 # Security Parser Sections
@@ -490,11 +284,8 @@ function Parse-SecuritySettings {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$Extension,
-
         [string]$GPOName,
-
         [string]$Class
     )
 
@@ -521,6 +312,56 @@ function Parse-SecuritySettings {
         -Extension $Extension `
         -GPOName $GPOName `
         -Class $Class
+
+    #
+    # Report any Security sub-section this module does not parse
+    # (for example legacy audit policy, event log, restricted groups,
+    # file system or registry permissions) instead of dropping it silently.
+    #
+    if ($Extension -is [System.Xml.XmlNode])
+    {
+        $Handled = @(
+            'Account',
+            'UserRightsAssignment',
+            'SecurityOptions',
+            'SystemServices'
+        )
+
+        $Reported = [System.Collections.Generic.HashSet[string]]::new(
+            [System.StringComparer]::OrdinalIgnoreCase
+        )
+
+        foreach ($Child in $Extension.ChildNodes)
+        {
+            if ($Child.NodeType -ne [System.Xml.XmlNodeType]::Element)
+            {
+                continue
+            }
+
+            $ChildName = $Child.LocalName
+
+            if ($Handled -contains $ChildName)
+            {
+                continue
+            }
+
+            if (-not $Reported.Add($ChildName))
+            {
+                continue
+            }
+
+            [void]$Result.Value.Unclassified.Add(
+                (
+                    New-UnclassifiedRecord `
+                        -GPOName $GPOName `
+                        -Class $Class `
+                        -Extension "Security" `
+                        -Category $ChildName `
+                        -Reason "Unsupported Security section"
+                )
+            )
+        }
+    }
 }
 
 function Parse-AccountPolicies {
@@ -653,11 +494,8 @@ function Parse-UserRightsAssignments {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$Extension,
-
         [string]$GPOName,
-
         [string]$Class
     )
 
@@ -670,7 +508,7 @@ function Parse-UserRightsAssignments {
         ))
     )
     {
-        $Members = @()
+        $Members = [System.Collections.ArrayList]::new()
 
         foreach (
             $Member in
@@ -682,22 +520,35 @@ function Parse-UserRightsAssignments {
         )
         {
             $MemberName =
-                Get-CleanText `
-                    (Get-XmlProperty `
+                Get-CleanText (
+                    Get-XmlProperty `
                         -Object $Member `
-                        -PropertyName 'Name')
+                        -PropertyName 'Name'
+                )
+
+            # Unresolved accounts may have no name; fall back to the SID.
+            if ([string]::IsNullOrWhiteSpace($MemberName))
+            {
+                $MemberName =
+                    Get-CleanText (
+                        Get-XmlProperty `
+                            -Object $Member `
+                            -PropertyName 'SID'
+                    )
+            }
 
             if (-not [string]::IsNullOrWhiteSpace($MemberName))
             {
-                $Members += $MemberName
+                [void]$Members.Add($MemberName)
             }
         }
 
-        if (@($Members).Count -eq 0)
+        if ($Members.Count -eq 0)
         {
-            $Members = @("<NoAssignments>")
+            [void]$Members.Add("<NoAssignments>")
         }
 
+        # Sorted so the same members in a different order compare as equal.
         Add-NormalizedSetting `
             -Result $Result `
             -GPOName $GPOName `
@@ -705,12 +556,13 @@ function Parse-UserRightsAssignments {
             -Extension "Security" `
             -Category "User Rights Assignment" `
             -SettingName (
-                Get-CleanText `
-                    (Get-XmlProperty `
+                Get-CleanText (
+                    Get-XmlProperty `
                         -Object $Assignment `
-                        -PropertyName 'Name')
+                        -PropertyName 'Name'
+                )
             ) `
-            -Value ($Members -join "; ") `
+            -Value ((@($Members) | Sort-Object) -join "; ") `
             -State "Configured"
     }
 }
@@ -882,7 +734,7 @@ function Parse-SecurityOptions {
                 }
 
                 $Value =
-                    $Entries -join "; "
+                    (@($Entries) | Sort-Object) -join "; "
             }
 
             #------------------------------------------
@@ -959,7 +811,7 @@ function Parse-SecurityOptions {
                 }
 
                 $Value =
-                    $Entries -join "; "
+                    (@($Entries) | Sort-Object) -join "; "
             }
         }
 
@@ -1030,14 +882,7 @@ function Parse-SecurityOptions {
             $Value = "<NoValue>"
         }
 
-        if (
-            [string]::IsNullOrWhiteSpace(
-                $SettingName
-            )
-        )
-        {
-            $SettingName = "<UnknownSecurityOption>"
-        }
+        # A blank name is reported by Add-NormalizedSetting as Unclassified.
 
         #--------------------------------------------------
         # Add Normalized Record
@@ -1176,30 +1021,33 @@ function Parse-AuditSetting {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$Audit,
-
         [string]$GPOName,
-
         [string]$Class
     )
 
     $SettingName =
-        Get-CleanText `
-            $Audit.SubcategoryName
+        Get-CleanText (
+            Get-XmlProperty `
+                -Object $Audit `
+                -PropertyName 'SubcategoryName'
+        )
 
     $PolicyTarget =
-        Get-CleanText `
-            $Audit.PolicyTarget
+        Get-CleanText (
+            Get-XmlProperty `
+                -Object $Audit `
+                -PropertyName 'PolicyTarget'
+        )
 
     $AuditValue =
-        Get-CleanText `
-            $Audit.SettingValue
-        
+        Get-CleanText (
+            Get-XmlProperty `
+                -Object $Audit `
+                -PropertyName 'SettingValue'
+        )
 
-    $Value =
-        Convert-AuditValue `
-            $AuditValue
+    $Value = Convert-AuditValue $AuditValue
 
     Add-NormalizedSetting `
         -Result $Result `
@@ -1216,10 +1064,24 @@ function Convert-AuditValue {
 
     [CmdletBinding()]
     param(
-        [int]$Value
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Value
     )
 
-    switch ($Value)
+    if ([string]::IsNullOrWhiteSpace($Value))
+    {
+        return "<NoValue>"
+    }
+
+    $Number = 0
+
+    if (-not [int]::TryParse($Value, [ref]$Number))
+    {
+        return "Unknown ($Value)"
+    }
+
+    switch ($Number)
     {
         0 { "No Auditing" }
 
@@ -1229,53 +1091,7 @@ function Convert-AuditValue {
 
         3 { "Success and Failure" }
 
-        default { "Unknown ($Value)" }
-    }
-}
-
-function Get-AuditCategory {
-
-    param(
-        [string]$SubCategory
-    )
-
-    switch -Regex ($SubCategory)
-    {
-        "Credential" {
-            "Logon/Logoff"
-        }
-
-        "Logon" {
-            "Logon/Logoff"
-        }
-
-        "Account" {
-            "Account Management"
-        }
-
-        "Policy" {
-            "Policy Change"
-        }
-
-        "File Share" {
-            "Object Access"
-        }
-
-        "Object" {
-            "Object Access"
-        }
-
-        "Privilege" {
-            "Privilege Use"
-        }
-
-        "System" {
-            "System"
-        }
-
-        default {
-            "Advanced Audit"
-        }
+        default { "Unknown ($Number)" }
     }
 }
 
@@ -1318,22 +1134,31 @@ function Parse-AdministrativeTemplatePolicy {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$Policy,
-
         [string]$GPOName,
-
         [string]$Class
     )
 
     $SettingName =
-        Get-CleanText $Policy.Name
+        Get-CleanText (
+            Get-XmlProperty `
+                -Object $Policy `
+                -PropertyName 'Name'
+        )
 
     $Category =
-        Get-CleanText $Policy.Category
+        Get-CleanText (
+            Get-XmlProperty `
+                -Object $Policy `
+                -PropertyName 'Category'
+        )
 
     $State =
-        Get-CleanText $Policy.State
+        Get-CleanText (
+            Get-XmlProperty `
+                -Object $Policy `
+                -PropertyName 'State'
+        )
 
     $Value =
         Get-AdministrativeTemplateValue `
@@ -1529,7 +1354,7 @@ function Get-AdministrativeTemplateValue {
             [void]$Values.Add(
                 ("{0}={1}" -f
                     (Get-CleanText (Get-XmlProperty $ListBox 'Name')),
-                    ($Entries -join '; '))
+                    ((@($Entries) | Sort-Object) -join '; '))
             )
         }
     }
@@ -1555,7 +1380,7 @@ function Get-AdministrativeTemplateValue {
             [void]$Values.Add(
                 ("{0}={1}" -f
                     (Get-CleanText (Get-XmlProperty $Item 'Name')),
-                    ($Entries -join '; '))
+                    ((@($Entries) | Sort-Object) -join '; '))
             )
         }
     }
@@ -1778,10 +1603,7 @@ function Parse-RegistrySetting {
         {
             $Value =
                 (
-                    Get-SafeArray $MultiString |
-                    ForEach-Object {
-                        Get-CleanText $_
-                    }
+                    Get-SafeArray $MultiString | ForEach-Object { Get-CleanText $_ } | Sort-Object
                 ) -join "; "
         }
     }
@@ -1819,31 +1641,28 @@ function Parse-WindowsFirewall {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$Extension,
-
         [string]$GPOName,
-
         [string]$Class
     )
 
     Parse-FirewallProfile `
         -Result $Result `
-        -ProfileNode $Extension.DomainProfile `
+        -ProfileNode (Get-XmlProperty -Object $Extension -PropertyName 'DomainProfile') `
         -ProfileName "Domain" `
         -GPOName $GPOName `
         -Class $Class
 
     Parse-FirewallProfile `
         -Result $Result `
-        -ProfileNode $Extension.PrivateProfile `
+        -ProfileNode (Get-XmlProperty -Object $Extension -PropertyName 'PrivateProfile') `
         -ProfileName "Private" `
         -GPOName $GPOName `
         -Class $Class
 
     Parse-FirewallProfile `
         -Result $Result `
-        -ProfileNode $Extension.PublicProfile `
+        -ProfileNode (Get-XmlProperty -Object $Extension -PropertyName 'PublicProfile') `
         -ProfileName "Public" `
         -GPOName $GPOName `
         -Class $Class
@@ -1914,18 +1733,39 @@ function Parse-FirewallRules {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$Extension,
-
         [string]$GPOName
     )
 
-    foreach ($Rule in @($Extension.InboundFirewallRules))
+    foreach (
+        $Rule in
+        (Get-SafeArray (
+            Get-XmlProperty `
+                -Object $Extension `
+                -PropertyName 'InboundFirewallRules'
+        ))
+    )
     {
         Parse-FirewallRule `
             -Result $Result `
             -Rule $Rule `
             -Direction "Inbound" `
+            -GPOName $GPOName
+    }
+
+    foreach (
+        $Rule in
+        (Get-SafeArray (
+            Get-XmlProperty `
+                -Object $Extension `
+                -PropertyName 'OutboundFirewallRules'
+        ))
+    )
+    {
+        Parse-FirewallRule `
+            -Result $Result `
+            -Rule $Rule `
+            -Direction "Outbound" `
             -GPOName $GPOName
     }
 }
@@ -2104,23 +1944,29 @@ function Parse-LocalUsersAndGroups {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$Extension,
-
         [string]$GPOName,
-
         [string]$Class
     )
 
     $Container =
-        $Extension.LocalUsersAndGroups
+        Get-XmlProperty `
+            -Object $Extension `
+            -PropertyName 'LocalUsersAndGroups'
 
-    if (-not $Container)
+    if ($null -eq $Container)
     {
         return
     }
 
-    foreach ($Group in @($Container.Group))
+    foreach (
+        $Group in
+        (Get-SafeArray (
+            Get-XmlProperty `
+                -Object $Container `
+                -PropertyName 'Group'
+        ))
+    )
     {
         Parse-LUGGroup `
             -Result $Result `
@@ -2135,22 +1981,32 @@ function Parse-LUGGroup {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$Group,
-
         [string]$GPOName,
-
         [string]$Class
     )
 
-    $GroupName =
-        Get-CleanText $Group.name
+    $GroupName = ""
 
-    if (-not $GroupName)
+    if (Test-Property -Object $Group -PropertyName 'name')
     {
-        $GroupName =
-            Get-CleanText `
-                $Group.Properties.groupName
+        $GroupName = Get-CleanText $Group.name
+    }
+
+    if ([string]::IsNullOrWhiteSpace($GroupName))
+    {
+        $Properties =
+            Get-XmlProperty `
+                -Object $Group `
+                -PropertyName 'Properties'
+
+        if (
+            $null -ne $Properties -and
+            (Test-Property -Object $Properties -PropertyName 'groupName')
+        )
+        {
+            $GroupName = Get-CleanText $Properties.groupName
+        }
     }
 
     $Members = Get-LUGMembers -Group $Group
@@ -2166,15 +2022,76 @@ function Parse-LUGGroup {
         -State "Configured"
 
     #
-    # Optional individual membership records
+    # Individual membership records
     #
-
     Parse-LUGMemberActions `
         -Result $Result `
         -Group $Group `
         -GroupName $GroupName `
         -GPOName $GPOName `
         -Class $Class
+}
+
+function Get-LUGMemberList {
+
+    [CmdletBinding()]
+    param(
+        [object]$Group
+    )
+
+    $List = [System.Collections.ArrayList]::new()
+
+    $Properties =
+        Get-XmlProperty `
+            -Object $Group `
+            -PropertyName 'Properties'
+
+    if ($null -eq $Properties)
+    {
+        return @()
+    }
+
+    $MembersNode =
+        Get-XmlProperty `
+            -Object $Properties `
+            -PropertyName 'Members'
+
+    if ($null -eq $MembersNode)
+    {
+        return @()
+    }
+
+    foreach (
+        $Member in
+        (Get-SafeArray (
+            Get-XmlProperty `
+                -Object $MembersNode `
+                -PropertyName 'Member'
+        ))
+    )
+    {
+        $Action = ""
+        $Name   = ""
+
+        if (Test-Property -Object $Member -PropertyName 'action')
+        {
+            $Action = Get-CleanText $Member.action
+        }
+
+        if (Test-Property -Object $Member -PropertyName 'name')
+        {
+            $Name = Get-CleanText $Member.name
+        }
+
+        [void]$List.Add(
+            [PSCustomObject]@{
+                Action = $Action
+                Name   = $Name
+            }
+        )
+    }
+
+    return $List
 }
 
 function Get-LUGMembers {
@@ -2184,76 +2101,21 @@ function Get-LUGMembers {
         [object]$Group
     )
 
-    $Items = @()
-
-    $Properties =
-        Get-XmlProperty `
-            -Object $Group `
-            -PropertyName 'Properties'
-
-    if ($Properties)
-    {
-        $MembersNode =
-            Get-XmlProperty `
-                -Object $Properties `
-                -PropertyName 'Members'
-
-        if ($MembersNode)
-        {
-            foreach (
-                $Member in
-                (Get-SafeArray (
-                    Get-XmlProperty `
-                        -Object $MembersNode `
-                        -PropertyName 'Member'
-                ))
-            )
-            {
-                $Action = ""
-
-                if (
-                    Test-Property `
-                        -Object $Member `
-                        -PropertyName 'action'
-                )
-                {
-                    $Action =
-                        Get-CleanText `
-                            $Member.action
-                }
-
-                $Name = ""
-
-                if (
-                    Test-Property `
-                        -Object $Member `
-                        -PropertyName 'name'
-                )
-                {
-                    $Name =
-                        Get-CleanText `
-                            $Member.name
-                }
-
-                $Items += (
-                    "{0}: {1}" -f
-                    $Action,
-                    $Name
-                )
-            }
-        }
-    }
-
-    if (
-        @($Items).Count -eq 0
+    # Sorted so member order in the XML does not affect comparisons.
+    $Items = @(
+        @(Get-LUGMemberList -Group $Group) |
+        ForEach-Object {
+            "{0}: {1}" -f $_.Action, $_.Name
+        } |
+        Sort-Object
     )
+
+    if ($Items.Count -eq 0)
     {
         return "<NoMembers>"
     }
 
-    return (
-        $Items -join "; "
-    )
+    return ($Items -join "; ")
 }
 
 function Parse-LUGMemberActions {
@@ -2261,25 +2123,29 @@ function Parse-LUGMemberActions {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$Group,
-
         [string]$GroupName,
-
         [string]$GPOName,
-
         [string]$Class
     )
 
-    foreach ($Member in @($Group.Properties.Members.Member))
+    # One record per member. The member is part of the setting name and the
+    # action is the value, so several members with the same action are separate
+    # settings (not one setting with conflicting values), and the same member
+    # with a different action in another GPO is a real conflict.
+    foreach ($Member in @(Get-LUGMemberList -Group $Group))
     {
-        $Action =
-            Get-CleanText `
-                $Member.action
+        if ([string]::IsNullOrWhiteSpace($Member.Name))
+        {
+            continue
+        }
 
-        $MemberName =
-            Get-CleanText `
-                $Member.name
+        $Action = $Member.Action
+
+        if ([string]::IsNullOrWhiteSpace($Action))
+        {
+            $Action = "<NoAction>"
+        }
 
         Add-NormalizedSetting `
             -Result $Result `
@@ -2287,10 +2153,8 @@ function Parse-LUGMemberActions {
             -Class $Class `
             -Extension "Local Users and Groups" `
             -Category "Membership Actions" `
-            -SettingName (
-                "$GroupName [$Action]"
-            ) `
-            -Value $MemberName `
+            -SettingName ("{0} member: {1}" -f $GroupName, $Member.Name) `
+            -Value $Action `
             -State "Configured"
     }
 }
@@ -2432,26 +2296,21 @@ function Parse-NRPTRule {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$Rule,
-
         [string]$GPOName,
-
         [string]$Class
     )
 
-    $Namespace = $null
+    $Namespace =
+        Get-CleanText (
+            Get-XmlProperty `
+                -Object $Rule `
+                -PropertyName 'Namespace'
+        )
 
-    if ($Rule.Namespace)
+    if ([string]::IsNullOrWhiteSpace($Namespace))
     {
-        $Namespace =
-            Get-CleanText $Rule.Namespace
-    }
-
-    if (-not $Namespace)
-    {
-        $Namespace =
-            "<UnknownNamespace>"
+        $Namespace = "<UnknownNamespace>"
     }
 
     $Values =
@@ -2499,48 +2358,101 @@ function Import-DeprecatedPolicyReference {
         [string]$Path
     )
 
-    $Policies      = @()
-    $RegistryPaths = @()
+    # Reads the table rows of DeprecatedPoliciesReference.md:
+    #
+    # | Technology | MatchType | Pattern | Status | Replacement | CategoryFilter |
+    #
+    # MatchType:
+    #   Name          SettingName equals Pattern (case-insensitive).
+    #                 If CategoryFilter is set, Category must equal it as well.
+    #   Category      Category contains Pattern (case-insensitive).
+    #   RegistryPath  Registry Settings key path contains Pattern (case-insensitive).
+    #
+    # Everything that is not a table row is ignored.
 
-    if (-not (Test-Path $Path))
+    $script:DeprecatedPolicyReference = @{
+        Entries = @()
+    }
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf))
     {
-        Write-Warning "Deprecated policy file not found: $Path"
-
-        $script:DeprecatedPolicyReference = @{
-            Policies      = @()
-            RegistryPaths = @()
-        }
-
+        Write-Warning "Deprecated policy reference file not found: $Path"
         return
     }
 
-    foreach ($Line in (Get-Content $Path))
+    $ValidMatchTypes = @('Name', 'Category', 'RegistryPath')
+    $Entries = [System.Collections.ArrayList]::new()
+
+    foreach ($Line in (Get-Content -LiteralPath $Path -Encoding UTF8))
     {
         $CurrentLine = $Line.Trim()
 
-        if ([string]::IsNullOrWhiteSpace($CurrentLine))
+        if (-not $CurrentLine.StartsWith('|'))
         {
             continue
         }
 
-        if ($CurrentLine.StartsWith("- "))
-        {
-            $Value = $CurrentLine.Substring(2)
+        $Cells = @(
+            $CurrentLine.Trim('|').Split('|') |
+            ForEach-Object { $_.Trim() }
+        )
 
-            if ($Value -match '^Software\\')
-            {
-                $RegistryPaths += $Value
-            }
-            else
-            {
-                $Policies += $Value
-            }
+        if ($Cells.Count -lt 5)
+        {
+            continue
         }
+
+        # Header row and separator row
+        if ($Cells[0] -eq 'Technology')
+        {
+            continue
+        }
+
+        if ($Cells[0] -match '^:?-{3,}:?$')
+        {
+            continue
+        }
+
+        $MatchType = $Cells[1]
+        $Pattern   = $Cells[2]
+
+        if ($ValidMatchTypes -notcontains $MatchType)
+        {
+            Write-Warning "Deprecated policy reference: unknown MatchType '$MatchType' for '$($Cells[0])'. Row skipped."
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($Pattern))
+        {
+            continue
+        }
+
+        $CategoryFilter = ''
+
+        if ($Cells.Count -ge 6)
+        {
+            $CategoryFilter = $Cells[5]
+        }
+
+        if ($MatchType -eq 'RegistryPath')
+        {
+            $Pattern = $Pattern -replace '^(HKLM|HKCU|HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER)\\', ''
+        }
+
+        [void]$Entries.Add(
+            [PSCustomObject]@{
+                Technology     = $Cells[0]
+                MatchType      = $MatchType
+                Pattern        = $Pattern
+                Status         = $Cells[3]
+                Replacement    = $Cells[4]
+                CategoryFilter = $CategoryFilter
+            }
+        )
     }
 
     $script:DeprecatedPolicyReference = @{
-        Policies      = $Policies
-        RegistryPaths = $RegistryPaths
+        Entries = @($Entries)
     }
 }
 
@@ -2552,42 +2464,73 @@ function Get-DeprecatedPolicyMatches {
         [System.Collections.IEnumerable]$Settings
     )
 
+    $Entries = @($script:DeprecatedPolicyReference.Entries)
+
+    if ($Entries.Count -eq 0)
+    {
+        return
+    }
+
+    $Ignore = [System.StringComparison]::OrdinalIgnoreCase
+
     foreach ($Setting in $Settings)
     {
-        if (
-            $script:DeprecatedPolicyReference.Policies `
-                -contains `
-                $Setting.SettingName
-        )
+        $SettingName = [string]$Setting.SettingName
+        $Category    = [string]$Setting.Category
+
+        foreach ($Entry in $Entries)
         {
-            [PSCustomObject]@{
-                GPOName     = $Setting.GPOName
-                Class       = $Setting.Class
-                Category    = $Setting.Category
-                SettingName = $Setting.SettingName
-                Value       = $Setting.Value
-                Reason      = "Deprecated Policy"
+            $IsMatch = $false
+
+            switch ($Entry.MatchType)
+            {
+                'Name' {
+                    if ([string]::Equals($SettingName, $Entry.Pattern, $Ignore))
+                    {
+                        $IsMatch = $true
+
+                        if (
+                            -not [string]::IsNullOrWhiteSpace($Entry.CategoryFilter) -and
+                            -not [string]::Equals($Category, $Entry.CategoryFilter, $Ignore)
+                        )
+                        {
+                            $IsMatch = $false
+                        }
+                    }
+                }
+
+                'Category' {
+                    if ($Category.IndexOf($Entry.Pattern, $Ignore) -ge 0)
+                    {
+                        $IsMatch = $true
+                    }
+                }
+
+                'RegistryPath' {
+                    if (
+                        $Setting.Extension -eq 'Registry Settings' -and
+                        $Category.IndexOf($Entry.Pattern, $Ignore) -ge 0
+                    )
+                    {
+                        $IsMatch = $true
+                    }
+                }
             }
 
-            continue
-        }
-
-        foreach (
-            $RegistryPath in
-            $script:DeprecatedPolicyReference.RegistryPaths
-        )
-        {
-            if (
-                $Setting.Category -like "*$RegistryPath*"
-            )
+            if ($IsMatch)
             {
                 [PSCustomObject]@{
-                    GPOName     = $Setting.GPOName
-                    Class       = $Setting.Class
-                    Category    = $Setting.Category
-                    SettingName = $Setting.SettingName
-                    Value       = $Setting.Value
-                    Reason      = "Deprecated Registry Technology"
+                    GPOName                = $Setting.GPOName
+                    Class                  = $Setting.Class
+                    Extension              = $Setting.Extension
+                    Category               = $Setting.Category
+                    SettingName            = $Setting.SettingName
+                    Value                  = $Setting.Value
+                    Technology             = $Entry.Technology
+                    MatchType              = $Entry.MatchType
+                    Status                 = $Entry.Status
+                    RecommendedReplacement = $Entry.Replacement
+                    Reason                 = "Deprecated: $($Entry.Technology)"
                 }
 
                 break
@@ -2600,179 +2543,6 @@ function Get-DeprecatedPolicyMatches {
 # Extension Discovery Wrappers
 #=====================================================
 
-function Invoke-SecurityParser {
-
-    [CmdletBinding()]
-    param(
-        [ref]$Result,
-
-        $Section,
-
-        [string]$GPOName,
-
-        [string]$Class
-    )
-
-    foreach ($ExtensionData in $Section.ExtensionData)
-    {
-        if (
-            $ExtensionData.Name -eq "Security"
-        )
-        {
-            Parse-SecuritySettings `
-                -Result $Result `
-                -Extension $ExtensionData.Extension `
-                -GPOName $GPOName `
-                -Class $Class
-        }
-    }
-}
-
-function Invoke-AuditParser {
-
-    [CmdletBinding()]
-    param(
-        [ref]$Result,
-
-        $Section,
-
-        [string]$GPOName,
-
-        [string]$Class
-    )
-
-    foreach ($ExtensionData in @($Section.ExtensionData))
-    {
-        if (-not $ExtensionData)
-        {
-            continue
-        }
-
-        if (
-            $ExtensionData.Name -like "*Audit*"
-        )
-        {
-            Parse-AdvancedAuditPolicies `
-                -Result $Result `
-                -Extension $ExtensionData.Extension `
-                -GPOName $GPOName `
-                -Class $Class
-        }
-    }
-}
-
-function Invoke-RegistryParser {
-
-    [CmdletBinding()]
-    param(
-        [ref]$Result,
-
-        $Section,
-
-        [string]$GPOName,
-
-        [string]$Class
-    )
-
-    foreach ($ExtensionData in @($Section.ExtensionData))
-    {
-        if ($ExtensionData.Name -ne "Registry")
-        {
-            continue
-        }
-
-        Parse-AdministrativeTemplates `
-            -Result $Result `
-            -Extension $ExtensionData.Extension `
-            -GPOName $GPOName `
-            -Class $Class
-
-        Parse-RegistrySettings `
-            -Result $Result `
-            -Extension $ExtensionData.Extension `
-            -GPOName $GPOName `
-            -Class $Class
-    }
-}
-
-function Invoke-FirewallParser {
-
-    [CmdletBinding()]
-    param(
-        [ref]$Result,
-
-        $Section,
-
-        [string]$GPOName,
-
-        [string]$Class
-    )
-
-    foreach ($ExtensionData in @($Section.ExtensionData))
-    {
-        if (
-            $ExtensionData.Name -eq
-            "Windows Firewall"
-        )
-        {
-            Parse-WindowsFirewall `
-                -Result $Result `
-                -Extension $ExtensionData.Extension `
-                -GPOName $GPOName `
-                -Class $Class
-        }
-    }
-}
-
-function Invoke-LUGParser {
-
-    [CmdletBinding()]
-    param(
-        [ref]$Result,
-
-        $Section,
-
-        [string]$GPOName,
-
-        [string]$Class
-    )
-
-    foreach ($ExtensionData in @($Section.ExtensionData))
-    {
-        if (
-            $ExtensionData.Name -eq
-            "Local Users and Groups"
-        )
-        {
-            Parse-LocalUsersAndGroups `
-                -Result $Result `
-                -Extension $ExtensionData.Extension `
-                -GPOName $GPOName `
-                -Class $Class
-        }
-    }
-}
-
-function Invoke-NRPTParser {
-
-    [CmdletBinding()]
-    param(
-        [ref]$Result,
-
-        [object]$Extension,
-
-        [string]$GPOName,
-
-        [string]$Class
-    )
-
-    Parse-NRPT `
-        -Result $Result `
-        -Extension $Extension `
-        -GPOName $GPOName `
-        -Class $Class
-}
-
 #=====================================================
 # Main Orchestration
 #=====================================================
@@ -2782,11 +2552,8 @@ function Invoke-GPOSectionParser {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$Section,
-
         [string]$Class,
-
         [string]$GPOName
     )
 
@@ -2816,61 +2583,88 @@ function Invoke-GPOSectionParser {
                 -Object $ExtensionData `
                 -PropertyName 'Extension'
 
-        switch ($ExtensionName)
+        # An error in one extension is recorded and does not discard the
+        # rest of the GPO.
+        try
         {
-            "Security" {
-                Parse-SecuritySettings `
-                    -Result $Result `
-                    -Extension $Extension `
-                    -GPOName $GPOName `
-                    -Class $Class
-            }
+            switch ($ExtensionName)
+            {
+                "Security" {
+                    Parse-SecuritySettings `
+                        -Result $Result `
+                        -Extension $Extension `
+                        -GPOName $GPOName `
+                        -Class $Class
+                }
 
-            "Advanced Audit Configuration" {
-                Parse-AdvancedAuditPolicies `
-                    -Result $Result `
-                    -Extension $Extension `
-                    -GPOName $GPOName `
-                    -Class $Class
-            }
+                "Advanced Audit Configuration" {
+                    Parse-AdvancedAuditPolicies `
+                        -Result $Result `
+                        -Extension $Extension `
+                        -GPOName $GPOName `
+                        -Class $Class
+                }
 
-            "Registry" {
-                Parse-AdministrativeTemplates `
-                    -Result $Result `
-                    -Extension $Extension `
-                    -GPOName $GPOName `
-                    -Class $Class
+                "Registry" {
+                    Parse-AdministrativeTemplates `
+                        -Result $Result `
+                        -Extension $Extension `
+                        -GPOName $GPOName `
+                        -Class $Class
 
-                Parse-RegistrySettings `
-                    -Result $Result `
-                    -Extension $Extension `
-                    -GPOName $GPOName `
-                    -Class $Class
-            }
+                    Parse-RegistrySettings `
+                        -Result $Result `
+                        -Extension $Extension `
+                        -GPOName $GPOName `
+                        -Class $Class
+                }
 
-            "Windows Firewall" {
-                Parse-WindowsFirewall `
-                    -Result $Result `
-                    -Extension $Extension `
-                    -GPOName $GPOName `
-                    -Class $Class
-            }
+                "Windows Firewall" {
+                    Parse-WindowsFirewall `
+                        -Result $Result `
+                        -Extension $Extension `
+                        -GPOName $GPOName `
+                        -Class $Class
+                }
 
-            "Local Users and Groups" {
-                Parse-LocalUsersAndGroups `
-                    -Result $Result `
-                    -Extension $Extension `
-                    -GPOName $GPOName `
-                    -Class $Class
-            }
+                "Local Users and Groups" {
+                    Parse-LocalUsersAndGroups `
+                        -Result $Result `
+                        -Extension $Extension `
+                        -GPOName $GPOName `
+                        -Class $Class
+                }
 
-            "Name Resolution Policy" {
-                Parse-NRPT `
-                    -Result $Result `
-                    -Extension $Extension `
-                    -GPOName $GPOName `
-                    -Class $Class
+                "Name Resolution Policy" {
+                    Parse-NRPT `
+                        -Result $Result `
+                        -Extension $Extension `
+                        -GPOName $GPOName `
+                        -Class $Class
+                }
+
+                default {
+                    Parse-UnknownExtension `
+                        -Result $Result `
+                        -ExtensionData $ExtensionData `
+                        -Class $Class `
+                        -GPOName $GPOName
+                }
             }
+        }
+        catch
+        {
+            $ErrorText = $_.Exception.Message
+
+            [void]$Result.Value.Unclassified.Add(
+                (
+                    New-UnclassifiedRecord `
+                        -GPOName $GPOName `
+                        -Class $Class `
+                        -Extension $ExtensionName `
+                        -Reason "Parser error: $ErrorText"
+                )
+            )
         }
     }
 }
@@ -2880,24 +2674,31 @@ function Parse-UnknownExtension {
     [CmdletBinding()]
     param(
         [ref]$Result,
-
         [object]$ExtensionData,
-
         [string]$Class,
-
         [string]$GPOName
     )
 
+    $ExtensionName =
+        Get-CleanText (
+            Get-XmlProperty `
+                -Object $ExtensionData `
+                -PropertyName 'Name'
+        )
+
+    if ([string]::IsNullOrWhiteSpace($ExtensionName))
+    {
+        $ExtensionName = "<UnnamedExtension>"
+    }
+
     [void]$Result.Value.Unclassified.Add(
-        [PSCustomObject]@{
-            GPOName   = $GPOName
-            Class     = $Class
-            Extension = (
-                Get-CleanText `
-                    $ExtensionData.Name
-            )
-            Reason    = "Unsupported Extension"
-        }
+        (
+            New-UnclassifiedRecord `
+                -GPOName $GPOName `
+                -Class $Class `
+                -Extension $ExtensionName `
+                -Reason "Unsupported Extension"
+        )
     )
 }
 
@@ -2912,27 +2713,41 @@ function Get-GPOSettingsFromXml {
         [string]$GPOName
     )
 
-    if (-not (Test-Path $Path))
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf))
     {
         throw "File not found: $Path"
     }
 
-    $Result =
-        New-GPOParseResult
+    $Result = New-GPOParseResult
+
+    # XmlDocument.Load(Stream) detects the file encoding (UTF-8 / UTF-16)
+    # from the byte order mark or XML declaration.
+    $Xml    = New-Object System.Xml.XmlDocument
+    $Stream = $null
 
     try
     {
-        [xml]$Xml =
-            Get-Content `
-                -Path $Path `
-                -Encoding Unicode
+        $ResolvedPath = (Resolve-Path -LiteralPath $Path).ProviderPath
+        $Stream       = [System.IO.File]::OpenRead($ResolvedPath)
+
+        $Xml.XmlResolver = $null
+        $Xml.Load($Stream)
     }
     catch
     {
         throw "Failed to load XML: $($_.Exception.Message)"
     }
+    finally
+    {
+        if ($null -ne $Stream)
+        {
+            $Stream.Dispose()
+        }
+    }
 
-    if (-not $Xml.GPO)
+    $GpoNode = $Xml.DocumentElement
+
+    if ($null -eq $GpoNode -or $GpoNode.LocalName -ne "GPO")
     {
         throw "Invalid GPO XML format."
     }
@@ -2942,12 +2757,16 @@ function Get-GPOSettingsFromXml {
         #
         # Computer Configuration
         #
+        $ComputerNode =
+            Get-XmlProperty `
+                -Object $GpoNode `
+                -PropertyName 'Computer'
 
-        if ($Xml.GPO.Computer)
+        if ($null -ne $ComputerNode)
         {
             Invoke-GPOSectionParser `
                 -Result ([ref]$Result) `
-                -Section $Xml.GPO.Computer `
+                -Section $ComputerNode `
                 -Class "Computer" `
                 -GPOName $GPOName
         }
@@ -2955,124 +2774,27 @@ function Get-GPOSettingsFromXml {
         #
         # User Configuration
         #
+        $UserNode =
+            Get-XmlProperty `
+                -Object $GpoNode `
+                -PropertyName 'User'
 
-        if ($Xml.GPO.User)
+        if ($null -ne $UserNode)
         {
             Invoke-GPOSectionParser `
                 -Result ([ref]$Result) `
-                -Section $Xml.GPO.User `
+                -Section $UserNode `
                 -Class "User" `
                 -GPOName $GPOName
         }
     }
     catch
     {
-        Write-Host ""
-        Write-Host "======================================="
-        Write-Host "ERROR PROCESSING GPO"
-        Write-Host "======================================="
-        Write-Host ""
-
-        Write-Host "GPO:"
-        Write-Host $GPOName
-
-        Write-Host ""
-        Write-Host "XML:"
-        Write-Host $Path
-
-        Write-Host ""
-        Write-Host "Exception:"
-        Write-Host $_.Exception.Message
-
-        Write-Host ""
-        Write-Host "Script Line:"
-        Write-Host $_.InvocationInfo.ScriptLineNumber
-
-        Write-Host ""
-        Write-Host "Position:"
-        Write-Host $_.InvocationInfo.PositionMessage
-
-        throw
+        throw "GPO '$GPOName' (script line $($_.InvocationInfo.ScriptLineNumber)): $($_.Exception.Message)"
     }
 
     return $Result
 }
-
-<#function Get-GPOSettingsFromXml {
-
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$Path,
-
-        [Parameter(Mandatory)]
-        [string]$GPOName
-    )
-
-    trap
-    {
-        Write-Host ""
-        Write-Host "======================================="
-        Write-Host "PARSER EXCEPTION"
-        Write-Host "======================================="
-        Write-Host ""
-
-        Write-Host "Exception:"
-        Write-Host $_.Exception.Message
-
-        Write-Host ""
-
-        Write-Host "Line Number:"
-        Write-Host $_.InvocationInfo.ScriptLineNumber
-
-        Write-Host ""
-
-        Write-Host "Position:"
-        Write-Host $_.InvocationInfo.PositionMessage
-
-        Write-Host ""
-
-        Write-Host "Stack Trace:"
-        Write-Host $_.ScriptStackTrace
-
-        Write-Host ""
-
-        continue
-    }
-
-    if (-not (Test-Path $Path))
-    {
-        throw "File not found: $Path"
-    }
-
-    $Result =
-        New-GPOParseResult
-
-    [xml]$Xml =
-        Get-Content `
-            -Path $Path `
-            -Encoding Unicode
-
-    if ($Xml.GPO.Computer)
-    {
-        Invoke-GPOSectionParser `
-            -Result ([ref]$Result) `
-            -Section $Xml.GPO.Computer `
-            -Class "Computer" `
-            -GPOName $GPOName
-    }
-
-    if ($Xml.GPO.User)
-    {
-        Invoke-GPOSectionParser `
-            -Result ([ref]$Result) `
-            -Section $Xml.GPO.User `
-            -Class "User" `
-            -GPOName $GPOName
-    }
-
-    return $Result
-}#>
 
 Export-ModuleMember -Function @(
     'Get-GPOSettingsFromXml',
