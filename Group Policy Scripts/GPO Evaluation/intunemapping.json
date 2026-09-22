@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "description": "GPOCompare mapping catalog for translating normalized GPO settings to Microsoft Intune migration targets.",
   "matchFields": [
     "Class",
@@ -7,6 +7,14 @@
     "Category",
     "SettingName"
   ],
+  "statusDefinitions": {
+    "DirectCategory": "A direct Intune policy category exists. Validate semantics before migrating.",
+    "Review": "A target area exists but each setting must be reviewed and mapped individually.",
+    "Discover": "Search Intune (Settings Catalog / ADMX-backed) for the exact setting name.",
+    "NoDirectReplacement": "No generic Intune equivalent. Assess per setting.",
+    "Unmapped": "Set by the script when no mapping entry matches the setting.",
+    "MappingFileMissing": "Set by the script when this file was not found."
+  },
   "mappings": [
     {
       "class": "Computer",
@@ -57,6 +65,18 @@
       "notes": "Service ACL/SDDL requires setting-specific assessment."
     },
     {
+      "class": "*",
+      "extension": "Security",
+      "category": "*",
+      "settingName": "*",
+      "intuneType": "Settings Catalog / Endpoint security",
+      "intuneSetting": null,
+      "omaUri": null,
+      "mappingStatus": "Review",
+      "confidence": "Low",
+      "notes": "Fallback for Security settings without a more specific entry, such as account policies (password, lockout, Kerberos). Identify the equivalent Settings Catalog setting before migration."
+    },
+    {
       "class": "Computer",
       "extension": "Administrative Templates",
       "category": "*",
@@ -105,7 +125,7 @@
       "notes": "Firewall profile settings belong under Microsoft Defender Firewall policies. Validate per-profile semantics."
     },
     {
-      "class": "Computer",
+      "class": "*",
       "extension": "Registry Settings",
       "category": "*",
       "settingName": "*",
@@ -138,7 +158,7 @@
       "omaUri": null,
       "mappingStatus": "Review",
       "confidence": "Medium",
-      "notes": "Translate individual GPP add/remove actions carefully; GPP action semantics are not always one-to-one."
+      "notes": "Each member is its own setting: SettingName is '<group> member: <member>' and the value is the GPP action. Translate add/remove actions carefully; GPP action semantics are not always one-to-one."
     },
     {
       "class": "Computer",
@@ -169,6 +189,6 @@
       "Description": "Description",
       "Active": "Enabled"
     },
-    "notes": "Address scopes are not currently parsed by the supplied module, so they cannot yet be mapped from this catalog."
+    "notes": "Inbound and Outbound rules are parsed. Address scopes are not parsed by the module, so they cannot yet be mapped from this catalog."
   }
 }
