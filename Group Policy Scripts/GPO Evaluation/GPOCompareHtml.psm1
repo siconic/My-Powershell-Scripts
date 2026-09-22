@@ -256,6 +256,32 @@ function Get-Attribute {
     return $null
 }
 
+function Get-NodeTagName {
+
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [object]$Node
+    )
+
+    # A whitespace/text node between tags does not expose .tagName the same
+    # way an element does; guard every access instead of assuming it is
+    # always safe to read.
+    if ($null -eq $Node)
+    {
+        return $null
+    }
+
+    try
+    {
+        return $Node.tagName
+    }
+    catch
+    {
+        return $null
+    }
+}
+
 function Test-IsNestedTable {
 
     [CmdletBinding()]
@@ -644,7 +670,7 @@ function Get-NestedDetailRows {
 
     $NextRow = $Row.nextSibling
 
-    while ($null -ne $NextRow -and $NextRow.tagName -ne 'TR')
+    while ($null -ne $NextRow -and (Get-NodeTagName $NextRow) -ne 'TR')
     {
         $NextRow = $NextRow.nextSibling
     }
@@ -1192,7 +1218,7 @@ function Parse-SystemServicesSection {
         $Heading = $Span.parentElement
         $Content = $Heading.nextSibling
 
-        while ($null -ne $Content -and $Content.tagName -ne 'DIV')
+        while ($null -ne $Content -and (Get-NodeTagName $Content) -ne 'DIV')
         {
             $Content = $Content.nextSibling
         }
@@ -1248,7 +1274,7 @@ function Parse-SystemServicesSection {
 
             $ServiceContent = $ChildDiv.nextSibling
 
-            while ($null -ne $ServiceContent -and $ServiceContent.tagName -ne 'DIV')
+            while ($null -ne $ServiceContent -and (Get-NodeTagName $ServiceContent) -ne 'DIV')
             {
                 $ServiceContent = $ServiceContent.nextSibling
             }
@@ -1763,3 +1789,4 @@ Export-ModuleMember -Function @(
     'Import-DeprecatedPolicyReference',
     'Get-DeprecatedPolicyMatches'
 )
+
