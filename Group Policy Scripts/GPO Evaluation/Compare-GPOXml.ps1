@@ -88,7 +88,27 @@ does not exist a warning is shown and no deprecated matches are reported.
 
 .NOTES
 Author:  Siconic
-Version: 3.1
+Version: 3.2
+
+Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
+schema (something that could break a workflow built on the old output).
+MINOR bumps are bug fixes and additions that don't change existing columns
+or behavior. GPOCompare.psm1 is versioned in lockstep with this script,
+since the two are always used together.
+
+Changelog:
+  3.2 - GPOCompare.psm1: replaced all 13 uses of the "{0}={1}" -f
+        composite-format operator with plain string interpolation, which
+        cannot throw the "index (zero based)..." formatting exception that
+        was reported against 3.1.
+  3.1 - GPOCompare.psm1: unsupported-extension Unclassified rows now carry
+        a SettingName, Value, and State per item instead of one blank row
+        per extension; parser-error Reason text now includes the module
+        line number that threw.
+  3.0 - Full rework: sorted list comparisons, GPO total based on parsed
+        files, conflict/unique/duplicate rules fixed, Intune mapping and
+        deprecated-policy matching added, Unclassified safety net added
+        for unsupported extensions and Security sub-sections.
 
 Recommended layout:
 
@@ -884,3 +904,4 @@ if ($AllUnclassified.Count -gt 0)
 
 Write-Host "Reports written to:"
 Write-Host $OutputFolder
+
