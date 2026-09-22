@@ -88,7 +88,7 @@ does not exist a warning is shown and no deprecated matches are reported.
 
 .NOTES
 Author:  Siconic
-Version: 3.0
+Version: 3.1
 
 Recommended layout:
 
