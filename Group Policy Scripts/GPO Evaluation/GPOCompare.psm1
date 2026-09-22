@@ -357,6 +357,7 @@ function Parse-SecuritySettings {
                         -Class $Class `
                         -Extension "Security" `
                         -Category $ChildName `
+                        -SettingName $ChildName `
                         -Reason "Unsupported Security section"
                 )
             )
@@ -2662,6 +2663,7 @@ function Invoke-GPOSectionParser {
                         -GPOName $GPOName `
                         -Class $Class `
                         -Extension $ExtensionName `
+                        -SettingName $ExtensionName `
                         -Reason "Parser error: $ErrorText"
                 )
             )
@@ -2691,15 +2693,92 @@ function Parse-UnknownExtension {
         $ExtensionName = "<UnnamedExtension>"
     }
 
-    [void]$Result.Value.Unclassified.Add(
-        (
-            New-UnclassifiedRecord `
-                -GPOName $GPOName `
-                -Class $Class `
-                -Extension $ExtensionName `
-                -Reason "Unsupported Extension"
+    # An unsupported extension (Scheduled Tasks, Scripts, Drive Maps, Folder
+    # Redirection, and so on) can contain several distinct items. Enumerate
+    # them heuristically (an XML attribute or child element commonly used to
+    # name an item) so each gets its own identifiable row instead of one
+    # blank-SettingName row for the whole extension.
+    $ItemNames = @(Get-UnknownExtensionItemNames -ExtensionData $ExtensionData)
+
+    if ($ItemNames.Count -eq 0)
+    {
+        [void]$Result.Value.Unclassified.Add(
+            (
+                New-UnclassifiedRecord `
+                    -GPOName $GPOName `
+                    -Class $Class `
+                    -Extension $ExtensionName `
+                    -Reason "Unsupported Extension"
+            )
         )
+
+        return
+    }
+
+    foreach ($ItemName in $ItemNames)
+    {
+        [void]$Result.Value.Unclassified.Add(
+            (
+                New-UnclassifiedRecord `
+                    -GPOName $GPOName `
+                    -Class $Class `
+                    -Extension $ExtensionName `
+                    -SettingName $ItemName `
+                    -Reason "Unsupported Extension"
+            )
+        )
+    }
+}
+
+function Get-UnknownExtensionItemNames {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$ExtensionData
     )
+
+    $Names = [System.Collections.Generic.List[string]]::new()
+
+    if ($ExtensionData -isnot [System.Xml.XmlNode])
+    {
+        return $Names
+    }
+
+    # Common naming conventions across GPP/extension schemas: a "name"
+    # attribute on an item element, or a child element that identifies it.
+    $NameChildCandidates = @('Name', 'FileName', 'TaskName', 'Command', 'Path')
+
+    foreach ($Node in $ExtensionData.SelectNodes(".//*"))
+    {
+        $ItemName = $null
+
+        if ($null -ne $Node.Attributes -and $null -ne $Node.Attributes['name'])
+        {
+            $ItemName = Get-CleanText $Node.Attributes['name'].Value
+        }
+
+        if ([string]::IsNullOrWhiteSpace($ItemName))
+        {
+            foreach ($Candidate in $NameChildCandidates)
+            {
+                $Child = $Node.SelectSingleNode($Candidate)
+
+                if ($null -ne $Child -and -not [string]::IsNullOrWhiteSpace($Child.InnerText))
+                {
+                    $ItemName = Get-CleanText $Child.InnerText
+                    break
+                }
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($ItemName))
+        {
+            [void]$Names.Add($ItemName)
+        }
+    }
+
+    return @($Names | Sort-Object -Unique)
 }
 
 function Get-GPOSettingsFromXml {
@@ -2801,3 +2880,4 @@ Export-ModuleMember -Function @(
     'Import-DeprecatedPolicyReference',
     'Get-DeprecatedPolicyMatches'
 )
+
