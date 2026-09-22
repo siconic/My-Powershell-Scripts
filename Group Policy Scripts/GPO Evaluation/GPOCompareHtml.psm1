@@ -25,6 +25,16 @@
 # written and structurally checked against real sample reports, but the
 # COM interop calls in particular should be treated as the highest-risk
 # part of this file until you run it.
+#
+# Version 1.1
+#
+# Changelog:
+#   1.1 - Guarded three unguarded sibling-walk .tagName accesses behind a
+#         new Get-NodeTagName helper, matching the one walk that was
+#         already guarded; parser-error Reason text now includes the
+#         module line number that threw.
+#   1.0 - Initial version - see Compare-GPOHtml.ps1's changelog for the
+#         paired script-level notes shipped alongside this version.
 #==========================================================
 Set-StrictMode -Version Latest
 
@@ -1630,7 +1640,7 @@ function Get-GPOSettingsFromHtml {
                     New-UnclassifiedRecord `
                         -ReportName $ReportName `
                         -Extension "System Services" `
-                        -Reason "Parser error: $($_.Exception.Message)"
+                        -Reason "Parser error (module line $($_.InvocationInfo.ScriptLineNumber)): $($_.Exception.Message)"
                 )
             )
         }
@@ -1761,7 +1771,7 @@ function Get-GPOSettingsFromHtml {
                     (
                         New-UnclassifiedRecord `
                             -ReportName $ReportName `
-                            -Reason "Parser error: $($_.Exception.Message)"
+                            -Reason "Parser error (module line $($_.InvocationInfo.ScriptLineNumber)): $($_.Exception.Message)"
                     )
                 )
             }
