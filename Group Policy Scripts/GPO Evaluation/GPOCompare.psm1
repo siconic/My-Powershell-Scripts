@@ -1,5 +1,20 @@
 #==========================================================
-# Version 3.1
+# Version 3.2
+#
+# Changelog:
+#   3.2 - Replaced all 13 uses of the "{0}={1}" -f composite-format
+#         operator with plain string interpolation. This was the reported
+#         source of "error formatting a string: index (zero based) must be
+#         greater than or equal to zero..." - string interpolation cannot
+#         throw that exception (there is no template/argument-list
+#         mechanism involved), so this removes the entire exception class
+#         regardless of which of the 13 call sites was actually failing.
+#   3.1 - Unsupported-extension Unclassified rows now carry a SettingName,
+#         Value, and State per item (Get-UnknownExtensionItems), instead of
+#         one blank row per whole extension; parser-error Reason text now
+#         includes the module line number that threw.
+#   3.0 - Full rework - see Compare-GPOXml.ps1's changelog for the paired
+#         script-level changes shipped alongside this version.
 #
 # Module Globals
 #==========================================================
@@ -761,17 +776,7 @@ function Parse-SecurityOptions {
                         @($Display.DisplayFields.Field)
                     )
                     {
-                        $Fields += (
-                            "{0}={1}" -f
-                            (
-                                Get-CleanText `
-                                    $Field.Name
-                            ),
-                            (
-                                Get-CleanText `
-                                    $Field.Value
-                            )
-                        )
+                        $Fields += "$(Get-CleanText $Field.Name)=$(Get-CleanText $Field.Value)"
                     }
                 }
 
@@ -1212,9 +1217,7 @@ function Get-AdministrativeTemplateValue {
     foreach ($Item in (Get-SafeArray (Get-XmlProperty $Policy 'CheckBox')))
     {
         [void]$Values.Add(
-            ("{0}={1}" -f
-                (Get-CleanText (Get-XmlProperty $Item 'Name')),
-                (Get-CleanText (Get-XmlProperty $Item 'State')))
+            "$(Get-CleanText (Get-XmlProperty $Item 'Name'))=$(Get-CleanText (Get-XmlProperty $Item 'State'))"
         )
     }
 
@@ -1225,9 +1228,7 @@ function Get-AdministrativeTemplateValue {
     foreach ($Item in (Get-SafeArray (Get-XmlProperty $Policy 'EditText')))
     {
         [void]$Values.Add(
-            ("{0}={1}" -f
-                (Get-CleanText (Get-XmlProperty $Item 'Name')),
-                (Get-CleanText (Get-XmlProperty $Item 'Value')))
+            "$(Get-CleanText (Get-XmlProperty $Item 'Name'))=$(Get-CleanText (Get-XmlProperty $Item 'Value'))"
         )
     }
 
@@ -1238,9 +1239,7 @@ function Get-AdministrativeTemplateValue {
     foreach ($Item in (Get-SafeArray (Get-XmlProperty $Policy 'Numeric')))
     {
         [void]$Values.Add(
-            ("{0}={1}" -f
-                (Get-CleanText (Get-XmlProperty $Item 'Name')),
-                (Get-CleanText (Get-XmlProperty $Item 'Value')))
+            "$(Get-CleanText (Get-XmlProperty $Item 'Name'))=$(Get-CleanText (Get-XmlProperty $Item 'Value'))"
         )
     }
 
@@ -1276,9 +1275,7 @@ function Get-AdministrativeTemplateValue {
         }
 
         [void]$Values.Add(
-            ("{0}={1}" -f
-                (Get-CleanText (Get-XmlProperty $Item 'Name')),
-                $SelectedValue)
+            "$(Get-CleanText (Get-XmlProperty $Item 'Name'))=$SelectedValue"
         )
     }
 
@@ -1340,7 +1337,7 @@ function Get-AdministrativeTemplateValue {
                 -not [string]::IsNullOrWhiteSpace($Data)
             )
             {
-                $Entries += ("{0}={1}" -f $Name,$Data)
+                $Entries += "$Name=$Data"
             }
             elseif (
                 -not [string]::IsNullOrWhiteSpace($Data)
@@ -1353,9 +1350,7 @@ function Get-AdministrativeTemplateValue {
         if (@($Entries).Count -gt 0)
         {
             [void]$Values.Add(
-                ("{0}={1}" -f
-                    (Get-CleanText (Get-XmlProperty $ListBox 'Name')),
-                    ((@($Entries) | Sort-Object) -join '; '))
+                "$(Get-CleanText (Get-XmlProperty $ListBox 'Name'))=$((@($Entries) | Sort-Object) -join '; ')"
             )
         }
     }
@@ -1379,9 +1374,7 @@ function Get-AdministrativeTemplateValue {
         if (@($Entries).Count -gt 0)
         {
             [void]$Values.Add(
-                ("{0}={1}" -f
-                    (Get-CleanText (Get-XmlProperty $Item 'Name')),
-                    ((@($Entries) | Sort-Object) -join '; '))
+                "$(Get-CleanText (Get-XmlProperty $Item 'Name'))=$((@($Entries) | Sort-Object) -join '; ')"
             )
         }
     }
@@ -1434,9 +1427,7 @@ function Get-AdministrativeTemplateValue {
         if (-not [string]::IsNullOrWhiteSpace($Child.InnerText))
         {
             [void]$Values.Add(
-                ("{0}={1}" -f
-                    $Child.Name,
-                    (Get-CleanText $Child.InnerText))
+                "$($Child.Name)=$(Get-CleanText $Child.InnerText)"
             )
         }
     }
@@ -2106,7 +2097,7 @@ function Get-LUGMembers {
     $Items = @(
         @(Get-LUGMemberList -Group $Group) |
         ForEach-Object {
-            "{0}: {1}" -f $_.Action, $_.Name
+            "$($_.Action): $($_.Name)"
         } |
         Sort-Object
     )
@@ -2154,7 +2145,7 @@ function Parse-LUGMemberActions {
             -Class $Class `
             -Extension "Local Users and Groups" `
             -Category "Membership Actions" `
-            -SettingName ("{0} member: {1}" -f $GroupName, $Member.Name) `
+            -SettingName "$GroupName member: $($Member.Name)" `
             -Value $Action `
             -State "Configured"
     }
@@ -2330,9 +2321,7 @@ function Parse-NRPTRule {
         }
 
         [void]$Values.Add(
-            "{0}={1}" -f
-            (Get-CleanText $Child.Name),
-            (Get-CleanText $Child.InnerText)
+            "$(Get-CleanText $Child.Name)=$(Get-CleanText $Child.InnerText)"
         )
     }
 
@@ -2805,7 +2794,7 @@ function Get-UnknownExtensionItems {
                 }
 
                 [void]$AttributeParts.Add(
-                    "{0}={1}" -f $Attribute.Name, (Get-CleanText $Attribute.Value)
+                    "$($Attribute.Name)=$(Get-CleanText $Attribute.Value)"
                 )
             }
         }
