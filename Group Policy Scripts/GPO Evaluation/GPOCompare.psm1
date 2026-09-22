@@ -2696,11 +2696,12 @@ function Parse-UnknownExtension {
     # An unsupported extension (Scheduled Tasks, Scripts, Drive Maps, Folder
     # Redirection, and so on) can contain several distinct items. Enumerate
     # them heuristically (an XML attribute or child element commonly used to
-    # name an item) so each gets its own identifiable row instead of one
-    # blank-SettingName row for the whole extension.
-    $ItemNames = @(Get-UnknownExtensionItemNames -ExtensionData $ExtensionData)
+    # name an item, plus its other attributes/text as a value) so each gets
+    # its own identifiable row instead of one blank row for the whole
+    # extension.
+    $Items = @(Get-UnknownExtensionItems -ExtensionData $ExtensionData)
 
-    if ($ItemNames.Count -eq 0)
+    if ($Items.Count -eq 0)
     {
         [void]$Result.Value.Unclassified.Add(
             (
@@ -2715,7 +2716,7 @@ function Parse-UnknownExtension {
         return
     }
 
-    foreach ($ItemName in $ItemNames)
+    foreach ($Item in $Items)
     {
         [void]$Result.Value.Unclassified.Add(
             (
@@ -2723,14 +2724,16 @@ function Parse-UnknownExtension {
                     -GPOName $GPOName `
                     -Class $Class `
                     -Extension $ExtensionName `
-                    -SettingName $ItemName `
+                    -SettingName $Item.Name `
+                    -Value $Item.Value `
+                    -State $Item.State `
                     -Reason "Unsupported Extension"
             )
         )
     }
 }
 
-function Get-UnknownExtensionItemNames {
+function Get-UnknownExtensionItems {
 
     [CmdletBinding()]
     param(
@@ -2738,11 +2741,11 @@ function Get-UnknownExtensionItemNames {
         [object]$ExtensionData
     )
 
-    $Names = [System.Collections.Generic.List[string]]::new()
+    $Items = [System.Collections.Generic.List[object]]::new()
 
     if ($ExtensionData -isnot [System.Xml.XmlNode])
     {
-        return $Names
+        return $Items
     }
 
     # Common naming conventions across GPP/extension schemas: a "name"
@@ -2772,13 +2775,65 @@ function Get-UnknownExtensionItemNames {
             }
         }
 
-        if (-not [string]::IsNullOrWhiteSpace($ItemName))
+        if ([string]::IsNullOrWhiteSpace($ItemName))
         {
-            [void]$Names.Add($ItemName)
+            continue
         }
+
+        # Value: the item's other attributes (GPP items are usually
+        # attribute-driven - Drive Maps, Shortcuts, INI files, Environment
+        # Variables, and so on all render as <Item attr1="x" attr2="y" ...>).
+        # "action" is reported separately as State (GPP's C/R/U/D convention);
+        # "name" is dropped since it's already the SettingName.
+        $AttributeParts = [System.Collections.Generic.List[string]]::new()
+        $StateValue     = ""
+
+        if ($null -ne $Node.Attributes)
+        {
+            foreach ($Attribute in $Node.Attributes)
+            {
+                if ($Attribute.Name -ieq 'name')
+                {
+                    continue
+                }
+
+                if ($Attribute.Name -ieq 'action')
+                {
+                    $StateValue = Get-CleanText $Attribute.Value
+                    continue
+                }
+
+                [void]$AttributeParts.Add(
+                    "{0}={1}" -f $Attribute.Name, (Get-CleanText $Attribute.Value)
+                )
+            }
+        }
+
+        $ValueText = (@($AttributeParts) | Sort-Object) -join "; "
+
+        if ([string]::IsNullOrWhiteSpace($ValueText))
+        {
+            # No attributes to fall back on (e.g. Scripts' <Command>/
+            # <Parameters> style extensions) - use the node's own text
+            # instead, unless that IS the name we already captured.
+            $DirectText = Get-CleanText $Node.InnerText
+
+            if (-not [string]::IsNullOrWhiteSpace($DirectText) -and $DirectText -ne $ItemName)
+            {
+                $ValueText = $DirectText
+            }
+        }
+
+        [void]$Items.Add(
+            [PSCustomObject]@{
+                Name  = $ItemName
+                Value = $ValueText
+                State = $StateValue
+            }
+        )
     }
 
-    return @($Names | Sort-Object -Unique)
+    return @($Items)
 }
 
 function Get-GPOSettingsFromXml {
