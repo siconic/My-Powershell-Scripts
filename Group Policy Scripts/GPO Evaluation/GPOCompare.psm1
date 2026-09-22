@@ -2656,6 +2656,7 @@ function Invoke-GPOSectionParser {
         catch
         {
             $ErrorText = $_.Exception.Message
+            $ErrorLine = $_.InvocationInfo.ScriptLineNumber
 
             [void]$Result.Value.Unclassified.Add(
                 (
@@ -2664,7 +2665,7 @@ function Invoke-GPOSectionParser {
                         -Class $Class `
                         -Extension $ExtensionName `
                         -SettingName $ExtensionName `
-                        -Reason "Parser error: $ErrorText"
+                        -Reason "Parser error (module line $ErrorLine): $ErrorText"
                 )
             )
         }
