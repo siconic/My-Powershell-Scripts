@@ -93,7 +93,7 @@ no deprecated matches are reported.
 
 .NOTES
 Author:  Siconic
-Version: 1.0 (initial - not yet run against a live PowerShell session)
+Version: 1.1 (initial - not yet run against a live PowerShell session)
 
 Requires Windows PowerShell with the HTMLFile COM object available
 (standard on Windows with the IE engine present). Not tested on PowerShell 7.
