@@ -1,0 +1,194 @@
+{
+  "schemaVersion": "1.1",
+  "description": "GPOCompare mapping catalog for translating normalized GPO settings to Microsoft Intune migration targets.",
+  "matchFields": [
+    "Class",
+    "Extension",
+    "Category",
+    "SettingName"
+  ],
+  "statusDefinitions": {
+    "DirectCategory": "A direct Intune policy category exists. Validate semantics before migrating.",
+    "Review": "A target area exists but each setting must be reviewed and mapped individually.",
+    "Discover": "Search Intune (Settings Catalog / ADMX-backed) for the exact setting name.",
+    "NoDirectReplacement": "No generic Intune equivalent. Assess per setting.",
+    "Unmapped": "Set by the script when no mapping entry matches the setting.",
+    "MappingFileMissing": "Set by the script when this file was not found."
+  },
+  "mappings": [
+    {
+      "class": "Computer",
+      "extension": "Security",
+      "category": "User Rights Assignment",
+      "settingName": "*",
+      "intuneType": "Endpoint security > Account protection",
+      "intuneSetting": "User Rights",
+      "omaUri": null,
+      "mappingStatus": "Review",
+      "confidence": "Medium",
+      "notes": "Match the individual user-right name to the corresponding Intune Account protection setting where exposed. Preserve assigned principals."
+    },
+    {
+      "class": "Computer",
+      "extension": "Security",
+      "category": "Security Options",
+      "settingName": "*",
+      "intuneType": "Settings Catalog / Endpoint security",
+      "intuneSetting": null,
+      "omaUri": null,
+      "mappingStatus": "Review",
+      "confidence": "Medium",
+      "notes": "Security Options coverage varies. Resolve the exact normalized setting name before migration."
+    },
+    {
+      "class": "Computer",
+      "extension": "Security",
+      "category": "System Services",
+      "settingName": "*",
+      "intuneType": "No direct generic policy mapping",
+      "intuneSetting": null,
+      "omaUri": null,
+      "mappingStatus": "NoDirectReplacement",
+      "confidence": "High",
+      "notes": "Evaluate Settings Catalog coverage for the specific service; otherwise use an approved management method such as remediation where appropriate."
+    },
+    {
+      "class": "Computer",
+      "extension": "Security",
+      "category": "Service Permissions",
+      "settingName": "*",
+      "intuneType": "No direct generic policy mapping",
+      "intuneSetting": null,
+      "omaUri": null,
+      "mappingStatus": "NoDirectReplacement",
+      "confidence": "High",
+      "notes": "Service ACL/SDDL requires setting-specific assessment."
+    },
+    {
+      "class": "*",
+      "extension": "Security",
+      "category": "*",
+      "settingName": "*",
+      "intuneType": "Settings Catalog / Endpoint security",
+      "intuneSetting": null,
+      "omaUri": null,
+      "mappingStatus": "Review",
+      "confidence": "Low",
+      "notes": "Fallback for Security settings without a more specific entry, such as account policies (password, lockout, Kerberos). Identify the equivalent Settings Catalog setting before migration."
+    },
+    {
+      "class": "Computer",
+      "extension": "Administrative Templates",
+      "category": "*",
+      "settingName": "*",
+      "intuneType": "Settings Catalog / Administrative Templates",
+      "intuneSetting": null,
+      "omaUri": null,
+      "mappingStatus": "Discover",
+      "confidence": "Medium",
+      "notes": "Search Intune by the exact ADMX policy name. Do not assume equivalence solely from the display name."
+    },
+    {
+      "class": "User",
+      "extension": "Administrative Templates",
+      "category": "*",
+      "settingName": "*",
+      "intuneType": "Settings Catalog / Administrative Templates",
+      "intuneSetting": null,
+      "omaUri": null,
+      "mappingStatus": "Discover",
+      "confidence": "Medium",
+      "notes": "Search Intune by the exact ADMX policy name and confirm user scope."
+    },
+    {
+      "class": "Computer",
+      "extension": "Advanced Audit Policy",
+      "category": "*",
+      "settingName": "*",
+      "intuneType": "Settings Catalog / Endpoint security",
+      "intuneSetting": null,
+      "omaUri": null,
+      "mappingStatus": "Review",
+      "confidence": "Medium",
+      "notes": "Map the exact audit subcategory and preserve Success/Failure selection."
+    },
+    {
+      "class": "Computer",
+      "extension": "Windows Firewall",
+      "category": "*",
+      "settingName": "*",
+      "intuneType": "Endpoint security > Firewall",
+      "intuneSetting": null,
+      "omaUri": null,
+      "mappingStatus": "DirectCategory",
+      "confidence": "High",
+      "notes": "Firewall profile settings belong under Microsoft Defender Firewall policies. Validate per-profile semantics."
+    },
+    {
+      "class": "*",
+      "extension": "Registry Settings",
+      "category": "*",
+      "settingName": "*",
+      "intuneType": "Settings Catalog / Custom / Remediation",
+      "intuneSetting": null,
+      "omaUri": null,
+      "mappingStatus": "Review",
+      "confidence": "Low",
+      "notes": "A registry value alone does not prove the supported Intune path. Identify the backing CSP/ADMX before using Custom or remediation."
+    },
+    {
+      "class": "Computer",
+      "extension": "Local Users and Groups",
+      "category": "Local Group Membership",
+      "settingName": "*",
+      "intuneType": "Endpoint security > Account protection",
+      "intuneSetting": "Local user group membership",
+      "omaUri": null,
+      "mappingStatus": "DirectCategory",
+      "confidence": "High",
+      "notes": "Convert GPP group membership intent to Local user group membership and verify add/replace semantics."
+    },
+    {
+      "class": "Computer",
+      "extension": "Local Users and Groups",
+      "category": "Membership Actions",
+      "settingName": "*",
+      "intuneType": "Endpoint security > Account protection",
+      "intuneSetting": "Local user group membership",
+      "omaUri": null,
+      "mappingStatus": "Review",
+      "confidence": "Medium",
+      "notes": "Each member is its own setting: SettingName is '<group> member: <member>' and the value is the GPP action. Translate add/remove actions carefully; GPP action semantics are not always one-to-one."
+    },
+    {
+      "class": "Computer",
+      "extension": "NRPT",
+      "category": "*",
+      "settingName": "*",
+      "intuneType": "Settings Catalog / Custom CSP",
+      "intuneSetting": null,
+      "omaUri": null,
+      "mappingStatus": "Review",
+      "confidence": "Low",
+      "notes": "NRPT and encrypted name-resolution settings require rule-by-rule validation. Do not generate an OMA-URI without a confirmed Policy CSP mapping."
+    }
+  ],
+  "firewallRuleMapping": {
+    "source": "FirewallRules.csv",
+    "intuneType": "Endpoint security > Firewall > Microsoft Defender Firewall Rules",
+    "fieldMap": {
+      "Name": "Name",
+      "Direction": "Direction",
+      "Action": "Action",
+      "Profile": "Profiles",
+      "Application": "File path / Program semantics",
+      "Protocol": "Protocol",
+      "LocalPort": "Local port ranges",
+      "RemotePort": "Remote port ranges",
+      "Service": "Service",
+      "Description": "Description",
+      "Active": "Enabled"
+    },
+    "notes": "Inbound and Outbound rules are parsed. Address scopes are not parsed by the module, so they cannot yet be mapped from this catalog."
+  }
+}
