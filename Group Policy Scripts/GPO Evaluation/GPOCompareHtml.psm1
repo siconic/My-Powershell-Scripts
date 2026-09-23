@@ -30,7 +30,7 @@
 #
 # Changelog:
 #   2.0 - No changes to this module. Version kept in lockstep with
-#         Compare-GPOHtml.ps1 (-ExcelOutput workbook added).
+#         Compare-GPOHtml.ps1 (Excel workbook output added).
 #   1.10 - No changes to this module. Version kept in lockstep with
 #          Compare-GPOHtml.ps1 (output file name prefix added).
 #   1.9 - The report title table (class "title") is skipped. Its

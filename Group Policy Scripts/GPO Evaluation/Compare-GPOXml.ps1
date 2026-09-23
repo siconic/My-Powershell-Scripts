@@ -64,11 +64,11 @@ ParserFailures.csv
 RunStatistics.csv
     Counts for the run.
 
-GPOCompareXml.xlsx (only with -ExcelOutput)
-    One workbook with one worksheet per report above. RunStatistics is the
-    first worksheet, shown as a Statistic / Value table with a blue header;
-    the other worksheets follow in the order above. Every value is stored as
-    text, as in the CSV files. The CSV files are still written.
+GPOCompareXml.xlsx (only with -OutputFormat Excel)
+    One workbook with one worksheet per report above, written instead of the
+    CSV files. RunStatistics is the first worksheet, shown as a Statistic /
+    Value table with a blue header; the other worksheets follow in the order
+    above. Every value is stored as text, as in the CSV files.
 
 .PARAMETER XmlFolder
 Folder containing XML exports (Get-GPOReport -ReportType Xml).
@@ -97,14 +97,21 @@ for no prefix. Pass -FilePrefix "" to skip the question and use no prefix.
 In a session that cannot ask (for example -NonInteractive), no prefix is
 used.
 
-.PARAMETER ExcelOutput
-Also write all reports to one Excel workbook, GPOCompareXml.xlsx (with the
-file name prefix, if one is used), one worksheet per report. Each worksheet
-has a bold, filtered and frozen header row. Needs the ImportExcel module
-(Install-Module ImportExcel -Scope CurrentUser); Excel itself is not
-needed. Without the module, a warning is shown and only the CSV files are
-written. A value longer than 32767 characters (the Excel cell limit) is cut
-to that length in the workbook only, with a warning.
+.PARAMETER OutputFormat
+CSV or Excel. CSV writes one CSV file per report. Excel writes one workbook,
+GPOCompareXml.xlsx (with the file name prefix, if one is used), with one worksheet
+per report and no CSV files. If this parameter is not given, the script
+asks (C or E; press Enter for CSV). In a session that cannot ask (for
+example -NonInteractive), CSV is used.
+
+Excel output needs the ImportExcel module; Excel itself is not needed. If
+the module is not installed, the script installs it for the current user
+from the PowerShell Gallery (Install-Module ImportExcel -Scope CurrentUser,
+plus the NuGet package provider if missing). If it cannot be installed, a
+warning is shown and the output continues as CSV files. If the workbook
+cannot be written (for example, the file is open in Excel), the reports are
+written as CSV files instead. A value longer than 32767 characters (the
+Excel cell limit) is cut to that length in the workbook, with a warning.
 
 .EXAMPLE
 .\Compare-GPOXml.ps1 -XmlFolder "C:\GPOProject\XML" -OutputFolder "C:\GPOProject\Output"
@@ -113,7 +120,7 @@ to that length in the workbook only, with a warning.
 .\Compare-GPOXml.ps1 -XmlFolder "C:\GPOProject\XML" -OutputFolder "C:\GPOProject\Output" -FilePrefix LS
 
 .EXAMPLE
-.\Compare-GPOXml.ps1 -XmlFolder "C:\GPOProject\XML" -OutputFolder "C:\GPOProject\Output" -FilePrefix LS -ExcelOutput
+.\Compare-GPOXml.ps1 -XmlFolder "C:\GPOProject\XML" -OutputFolder "C:\GPOProject\Output" -FilePrefix LS -OutputFormat Excel
 
 .NOTES
 Author:  Siconic
@@ -122,17 +129,19 @@ Version: 4.0
 Versioning: MAJOR bumps mean restructured logic, a changed CSV/report
 schema (something that could break a workflow built on the old output), or
 a major new feature such as a new output format. MINOR bumps are bug fixes
-and small additions that don't change existing columns or behavior. GPOCompare.psm1 is versioned in lockstep with this script,
-since the two are always used together.
+and small additions that don't change existing columns or behavior.
+GPOCompare.psm1 is versioned in lockstep with this script, since the two are always used together.
 
 Changelog:
-  4.0 - New -ExcelOutput switch. Also writes GPOCompareXml.xlsx, one
-        worksheet per report, using the ImportExcel module. RunStatistics
-        is the first worksheet, shown as a Statistic / Value table with a
-        blue header. The CSV files
-        are unchanged. Without the module, a warning is shown and only the
-        CSV files are written. No module changes; the module version is
-        kept in lockstep.
+  4.0 - Excel output. New -OutputFormat parameter (CSV or Excel); if it
+        is not given, the script asks. Excel writes one workbook,
+        GPOCompareXml.xlsx, with one worksheet per report and no CSV
+        files. RunStatistics is the first worksheet, shown as a
+        Statistic / Value table with a blue header. If the ImportExcel
+        module is missing, the script installs it for the current user;
+        if that fails, or the workbook cannot be written, the output is
+        CSV files. No module changes; the module version is kept in
+        lockstep.
   3.3 - New -FilePrefix parameter. The prefix and a hyphen are added to
         the start of every output file name (LS-CommonSettings.csv). If
         the parameter is not given, the script asks for it; an empty
@@ -181,13 +190,31 @@ param(
 
     [string]$FilePrefix,
 
-    [switch]$ExcelOutput
+    [ValidateSet('CSV', 'Excel')]
+    [string]$OutputFormat
 )
 
 $ErrorActionPreference = "Stop"
 
 # Separator used when building comparison keys. It cannot occur in setting text.
 $Sep = [string][char]0x1F
+
+# Every report this script writes, in this order.
+$ExpectedReports = @(
+    "ParsedSettings.csv"
+    "CommonSettings.csv"
+    "CommonSettingsByName.csv"
+    "UniqueSettings.csv"
+    "ConflictingSettings.csv"
+    "DuplicateSettings.csv"
+    "DeprecatedPolicies.csv"
+    "MissingSettingsMatrix.csv"
+    "FirewallRules.csv"
+    "IntuneMigrationCandidates.csv"
+    "UnclassifiedSettings.csv"
+    "ParserFailures.csv"
+    "RunStatistics.csv"
+)
 
 # ------------------------------------------------------------
 # Validation
@@ -250,22 +277,113 @@ else
 }
 
 # ------------------------------------------------------------
-# Excel workbook check
+# Output format (CSV files or Excel workbook)
 # ------------------------------------------------------------
 
-# -ExcelOutput needs the ImportExcel module. Without it, only the CSV files
-# are written.
-if ($ExcelOutput)
+# When -OutputFormat is not given, ask for it. An empty answer means CSV.
+# In a non-interactive session Read-Host fails, and CSV is used.
+if (-not $PSBoundParameters.ContainsKey('OutputFormat'))
 {
-    if (@(Get-Module -ListAvailable -Name ImportExcel).Count -eq 0)
+    $Answer = ""
+
+    try
     {
-        Write-Warning "-ExcelOutput was given, but the ImportExcel module is not installed. Only the CSV files will be written. To install it, run: Install-Module ImportExcel -Scope CurrentUser"
-        $ExcelOutput = $false
+        $Answer = Read-Host "Output format: C = CSV files, E = Excel workbook. Press Enter for CSV"
+    }
+    catch
+    {
+        $Answer = ""
+    }
+
+    $Answer = "$($Answer)".Trim()
+
+    if (($Answer -ieq 'E') -or ($Answer -ieq 'Excel'))
+    {
+        $OutputFormat = 'Excel'
+    }
+    elseif (($Answer -eq '') -or ($Answer -ieq 'C') -or ($Answer -ieq 'CSV'))
+    {
+        $OutputFormat = 'CSV'
     }
     else
     {
-        Import-Module ImportExcel -ErrorAction Stop
+        Write-Warning "'$Answer' is not C or E. Output will be CSV files."
+        $OutputFormat = 'CSV'
     }
+}
+
+# Excel output needs the ImportExcel module. If it is not installed, try to
+# install it for the current user from the PowerShell Gallery. If that
+# fails, the output continues as CSV files.
+if ($OutputFormat -eq 'Excel')
+{
+    $ImportExcelReady = (@(Get-Module -ListAvailable -Name ImportExcel).Count -gt 0)
+
+    if (-not $ImportExcelReady)
+    {
+        Write-Host "The ImportExcel module is not installed. Installing it for the current user from the PowerShell Gallery..."
+
+        try
+        {
+            # The PowerShell Gallery requires TLS 1.2, which Windows
+            # PowerShell 5.1 does not always use by default.
+            [System.Net.ServicePointManager]::SecurityProtocol =
+                [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
+
+            # Install-Module needs the NuGet package provider.
+            if (@(Get-PackageProvider -ListAvailable -Name NuGet -ErrorAction SilentlyContinue).Count -eq 0)
+            {
+                Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force -ErrorAction Stop | Out-Null
+            }
+
+            # -Force skips the question about installing from an untrusted
+            # repository (the PowerShell Gallery is untrusted by default).
+            Install-Module -Name ImportExcel -Repository PSGallery -Scope CurrentUser -Force -ErrorAction Stop
+        }
+        catch
+        {
+            Write-Warning "Installing the ImportExcel module failed: $($_.Exception.Message)"
+        }
+
+        $ImportExcelReady = (@(Get-Module -ListAvailable -Name ImportExcel).Count -gt 0)
+
+        if ($ImportExcelReady)
+        {
+            Write-Host "The ImportExcel module is available."
+        }
+    }
+
+    if ($ImportExcelReady)
+    {
+        try
+        {
+            Import-Module ImportExcel -ErrorAction Stop
+        }
+        catch
+        {
+            Write-Warning "Loading the ImportExcel module failed: $($_.Exception.Message)"
+            $ImportExcelReady = $false
+        }
+    }
+
+    if (-not $ImportExcelReady)
+    {
+        Write-Warning "The ImportExcel module could not be installed. Output will continue as CSV files."
+        $OutputFormat = 'CSV'
+    }
+}
+
+$ExcelOutput  = ($OutputFormat -eq 'Excel')
+$WorkbookName = "$($FileNamePrefix)GPOCompareXml.xlsx"
+$WorkbookPath = Join-Path $OutputFolder $WorkbookName
+
+if ($ExcelOutput)
+{
+    Write-Host "Output format: Excel workbook ($WorkbookName)"
+}
+else
+{
+    Write-Host "Output format: CSV files"
 }
 
 # Reports collected by Export-Report for the Excel workbook.
@@ -285,8 +403,6 @@ function Export-Report
         [string]$Name
     )
 
-    $Path = Join-Path $OutputFolder "$($FileNamePrefix)$($Name)"
-
     $Rows = @()
 
     if ($null -ne $Data)
@@ -294,7 +410,8 @@ function Export-Report
         $Rows = @($Data)
     }
 
-    # Keep the rows for the Excel workbook, which is written at the end.
+    # Excel output: keep the rows for the workbook, which is written by
+    # Save-ExcelOutput. No CSV file is written.
     if ($ExcelOutput)
     {
         [void]$ExcelSheets.Add(
@@ -303,6 +420,28 @@ function Export-Report
                 Rows = $Rows
             }
         )
+
+        return
+    }
+
+    Write-CsvReport -Rows $Rows -Name $Name
+}
+
+function Write-CsvReport
+{
+    param(
+        [AllowNull()]
+        [object[]]$Rows,
+
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    $Path = Join-Path $OutputFolder "$($FileNamePrefix)$($Name)"
+
+    if ($null -eq $Rows)
+    {
+        $Rows = @()
     }
 
     # Export-Csv writes nothing for empty input; create an empty file instead
@@ -315,6 +454,85 @@ function Export-Report
 
     $Rows |
     Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8
+}
+
+function Get-ReportLocation
+{
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    # Where a report can be found, for messages: its CSV file, or its
+    # worksheet in the Excel workbook.
+    if ($ExcelOutput)
+    {
+        return "the $([System.IO.Path]::GetFileNameWithoutExtension($Name)) worksheet in $WorkbookName"
+    }
+
+    return "$($FileNamePrefix)$($Name)"
+}
+
+function Save-ExcelOutput
+{
+    # Writes the reports collected by Export-Report to the Excel workbook:
+    # RunStatistics first, then the others in $ExpectedReports order. After
+    # an early stop, only the reports collected so far are included. If the
+    # workbook cannot be written, the same reports are written as CSV files
+    # instead.
+    $OrderedSheets = [System.Collections.ArrayList]::new()
+    $SheetOrder    = @('RunStatistics.csv') + @($ExpectedReports | Where-Object { $_ -ne 'RunStatistics.csv' })
+
+    foreach ($Report in $SheetOrder)
+    {
+        $SheetName = [System.IO.Path]::GetFileNameWithoutExtension($Report)
+
+        foreach ($Sheet in @($ExcelSheets | Where-Object { $_.Name -eq $SheetName }))
+        {
+            [void]$OrderedSheets.Add($Sheet)
+        }
+    }
+
+    try
+    {
+        Export-ExcelWorkbook -Path $WorkbookPath -Sheets @($OrderedSheets)
+    }
+    catch
+    {
+        Write-Warning "Writing the Excel workbook failed: $($_.Exception.Message). Writing CSV files instead."
+
+        # Remove a partly written workbook. If it is locked (for example,
+        # open in Excel), leave it and continue with the CSV files.
+        try
+        {
+            if (Test-Path -LiteralPath $WorkbookPath)
+            {
+                Remove-Item -LiteralPath $WorkbookPath -Force -ErrorAction Stop
+            }
+        }
+        catch
+        {
+        }
+
+        $script:ExcelOutput = $false
+
+        foreach ($Sheet in $OrderedSheets)
+        {
+            Write-CsvReport -Rows @($Sheet.Rows) -Name "$($Sheet.Name).csv"
+            Write-Host "[OK] $($FileNamePrefix)$($Sheet.Name).csv"
+        }
+
+        return
+    }
+
+    if (Test-Path -LiteralPath $WorkbookPath)
+    {
+        Write-Host "[OK] $WorkbookName ($($OrderedSheets.Count) worksheets)"
+    }
+    else
+    {
+        Write-Warning "$WorkbookName missing"
+    }
 }
 
 function ConvertTo-ExcelSheetRows
@@ -700,7 +918,7 @@ foreach ($XmlFile in $XmlFiles)
 
         if ($Result.Unclassified.Count -gt 0)
         {
-            Write-Warning "$($XmlFile.BaseName): $($Result.Unclassified.Count) unclassified entries (see $($FileNamePrefix)UnclassifiedSettings.csv)."
+            Write-Warning "$($XmlFile.BaseName): $($Result.Unclassified.Count) unclassified entries (see $(Get-ReportLocation 'UnclassifiedSettings.csv'))."
         }
     }
     catch
@@ -743,7 +961,14 @@ Export-Report $Failures        "ParserFailures.csv"
 
 if ($AllSettings.Count -eq 0)
 {
-    throw "No settings were parsed from any XML file. See $($FileNamePrefix)ParserFailures.csv and $($FileNamePrefix)UnclassifiedSettings.csv in $OutputFolder"
+    # Write the reports collected so far, so ParserFailures and
+    # UnclassifiedSettings are available to see why nothing was parsed.
+    if ($ExcelOutput)
+    {
+        Save-ExcelOutput
+    }
+
+    throw "No settings were parsed from any XML file. See $(Get-ReportLocation 'ParserFailures.csv') and $(Get-ReportLocation 'UnclassifiedSettings.csv') in $OutputFolder"
 }
 
 # ------------------------------------------------------------
@@ -1142,73 +1367,28 @@ Export-Report $Statistics            "RunStatistics.csv"
 # Validation
 # ------------------------------------------------------------
 
-$ExpectedReports = @(
-    "ParsedSettings.csv"
-    "CommonSettings.csv"
-    "CommonSettingsByName.csv"
-    "UniqueSettings.csv"
-    "ConflictingSettings.csv"
-    "DuplicateSettings.csv"
-    "DeprecatedPolicies.csv"
-    "MissingSettingsMatrix.csv"
-    "FirewallRules.csv"
-    "IntuneMigrationCandidates.csv"
-    "UnclassifiedSettings.csv"
-    "ParserFailures.csv"
-    "RunStatistics.csv"
-)
-
 Write-Host ""
 Write-Host "Generated Reports"
 Write-Host "-----------------"
 
-foreach ($Report in $ExpectedReports)
-{
-    $File = Join-Path $OutputFolder "$($FileNamePrefix)$($Report)"
-
-    if (Test-Path -LiteralPath $File)
-    {
-        Write-Host "[OK] $($FileNamePrefix)$($Report)"
-    }
-    else
-    {
-        Write-Warning "$($FileNamePrefix)$($Report) missing"
-    }
-}
-
-# ------------------------------------------------------------
-# Excel workbook (-ExcelOutput)
-# ------------------------------------------------------------
-
 if ($ExcelOutput)
 {
-    $WorkbookName = "$($FileNamePrefix)GPOCompareXml.xlsx"
-    $WorkbookPath = Join-Path $OutputFolder $WorkbookName
-
-    # RunStatistics first, then the other worksheets in the same order as the
-    # report list above.
-    $OrderedSheets = [System.Collections.ArrayList]::new()
-    $SheetOrder    = @('RunStatistics.csv') + @($ExpectedReports | Where-Object { $_ -ne 'RunStatistics.csv' })
-
-    foreach ($Report in $SheetOrder)
+    Save-ExcelOutput
+}
+else
+{
+    foreach ($Report in $ExpectedReports)
     {
-        $SheetName = [System.IO.Path]::GetFileNameWithoutExtension($Report)
+        $File = Join-Path $OutputFolder "$($FileNamePrefix)$($Report)"
 
-        foreach ($Sheet in @($ExcelSheets | Where-Object { $_.Name -eq $SheetName }))
+        if (Test-Path -LiteralPath $File)
         {
-            [void]$OrderedSheets.Add($Sheet)
+            Write-Host "[OK] $($FileNamePrefix)$($Report)"
         }
-    }
-
-    Export-ExcelWorkbook -Path $WorkbookPath -Sheets @($OrderedSheets)
-
-    if (Test-Path -LiteralPath $WorkbookPath)
-    {
-        Write-Host "[OK] $WorkbookName ($($OrderedSheets.Count) worksheets)"
-    }
-    else
-    {
-        Write-Warning "$WorkbookName missing"
+        else
+        {
+            Write-Warning "$($FileNamePrefix)$($Report) missing"
+        }
     }
 }
 
@@ -1224,12 +1404,12 @@ Write-Host ""
 
 if ($Failures.Count -gt 0)
 {
-    Write-Warning "$($Failures.Count) XML file(s) failed to parse and are excluded from the comparison ($($FileNamePrefix)ParserFailures.csv)."
+    Write-Warning "$($Failures.Count) XML file(s) failed to parse and are excluded from the comparison ($(Get-ReportLocation 'ParserFailures.csv'))."
 }
 
 if ($AllUnclassified.Count -gt 0)
 {
-    Write-Warning "$($AllUnclassified.Count) unclassified entries are not part of the comparison ($($FileNamePrefix)UnclassifiedSettings.csv)."
+    Write-Warning "$($AllUnclassified.Count) unclassified entries are not part of the comparison ($(Get-ReportLocation 'UnclassifiedSettings.csv'))."
 }
 
 Write-Host "Reports written to:"

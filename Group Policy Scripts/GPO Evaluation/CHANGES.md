@@ -18,12 +18,15 @@ did and didn't catch.
 
 ## XML toolset (Compare-GPOXml.ps1 + GPOCompare.psm1) - current: 4.0
 
-- **4.0** - New `-ExcelOutput` switch (MAJOR: a new output format), the
-  same as HTML 2.0, including RunStatistics as the first worksheet in a
-  blue Statistic / Value table. Also writes `GPOCompareXml.xlsx` (with the
-  file name prefix). No module changes. The
-  workbook functions were run in Windows PowerShell 5.1 with test rows
-  (see HTML 2.0). A full XML run with `-ExcelOutput` has not been tested,
+- **4.0** - Excel output (MAJOR: a new output format), the same as HTML
+  2.0: new `-OutputFormat CSV|Excel` parameter with a question when it is
+  not given; Excel writes only `GPOCompareXml.xlsx` (with the file name
+  prefix), with RunStatistics first in a blue Statistic / Value table;
+  ImportExcel is installed if missing, with CSV output if that fails. No
+  module changes. Run in Windows PowerShell 5.1: the workbook functions
+  with test rows (see HTML 2.0), and `-OutputFormat Excel` with one invalid
+  XML file, which wrote a workbook with the 4 worksheets collected before
+  the "No settings were parsed" stop. A full XML run has not been tested,
   because no GPO XML exports were available.
 
 - **3.3** - New `-FilePrefix` parameter, the same as HTML 1.10. The prefix
@@ -59,17 +62,24 @@ did and didn't catch.
 
 ## HTML toolset (Compare-GPOHtml.ps1 + GPOCompareHtml.psm1) - current: 2.0
 
-- **2.0** - New `-ExcelOutput` switch (MAJOR: a new output format). The
-  CSV files are still written, unchanged. The script also writes
-  `GPOCompareHtml.xlsx` (with the file name prefix): one worksheet per
-  report. RunStatistics is the first
-  worksheet, shown as a two-column Statistic / Value table with a title
-  and Excel's blue Medium2 table style; the CSV keeps its one-row layout.
+- **2.0** - Excel output (MAJOR: a new output format). New
+  `-OutputFormat` parameter, `CSV` or `Excel`. If it is not given, the
+  script asks (C or E; Enter or no way to ask means CSV; any other answer
+  gives a warning and CSV). CSV output is unchanged. Excel output writes
+  only `GPOCompareHtml.xlsx` (with the file name prefix), one worksheet
+  per report, and no CSV files. RunStatistics is the first worksheet,
+  shown as a two-column Statistic / Value table with a title and Excel's
+  blue Medium2 table style (`RunStatistics.csv` keeps its one-row layout).
   The other worksheets follow in the report-list order, with a bold,
-  filtered and frozen header row. A report with no rows
-  gets a worksheet that says "No rows". Uses the ImportExcel module (tested
-  with 7.8.10); Excel is not needed. Without the module, a warning is shown
-  and only the CSV files are written. Every value is kept as text:
+  filtered and frozen header row. A report with no rows gets a worksheet
+  that says "No rows". Uses the ImportExcel module (tested with 7.8.10);
+  Excel is not needed. If the module is missing, the script installs it
+  for the current user from the PowerShell Gallery (with the NuGet
+  provider, TLS 1.2 and `-Force`); if that fails, it says so and the
+  output is CSV files. If the "No settings were parsed" stop happens, the
+  workbook is still written with the worksheets collected so far. If the
+  workbook cannot be written (for example, it is open in Excel), the
+  reports are written as CSV files instead. Every value is kept as text:
   `-NoNumberConversion` and `-NoHyperLinkConversion` stop number and link
   conversion, and text starting with `=` (which Export-Excel always writes
   as a formula) is written back as plain text. Values longer than 32767
@@ -77,10 +87,18 @@ did and didn't catch.
   No module changes. Run in Windows PowerShell 5.1: a full run wrote all 18
   worksheets; test rows with `=SUM(A1:A2)`, a URL, `0001`, `1-2` and a
   40,000-character value were read back unchanged (the long value cut to
-  32767), and Excel showed the `=` value as text with no formula; with the
-  module hidden, the warning was shown and 18 CSV files were written.
-  Excel opened the workbook on RunStatistics, and a picture of the table
-  exported from Excel showed the blue header and banded rows.
+  32767), and Excel showed the `=` value as text with no formula. Excel
+  opened the workbook on RunStatistics, and a picture of the table
+  exported from Excel showed the blue header and banded rows. Output
+  format: `Excel` wrote only the workbook (18 worksheets); `CSV` wrote 18
+  CSV files; no way to ask gave CSV; answer `E` gave the workbook; answer
+  `X` gave a warning and CSV; the early stop wrote a workbook with the 5
+  worksheets collected so far; a locked workbook file gave the warning and
+  18 CSV files. Install failure was tested with the module reported
+  missing and the internet blocked by an unreachable proxy: the error was
+  shown, then "could not be installed. Output will continue as CSV files."
+  and 18 CSV files. A successful install by the script has not been
+  tested, because ImportExcel was already installed on the test PC.
 
 - **1.10** - New `-FilePrefix` parameter. The prefix and a hyphen are added
   to the start of every output file name (`LS-CommonSettings.csv`). A

@@ -3,7 +3,7 @@
 #
 # Changelog:
 #   4.0 - No changes to this module. Version kept in lockstep with
-#         Compare-GPOXml.ps1 (-ExcelOutput workbook added).
+#         Compare-GPOXml.ps1 (Excel workbook output added).
 #   3.3 - No changes to this module. Version kept in lockstep with
 #         Compare-GPOXml.ps1 (output file name prefix added).
 #   3.2 - Replaced all 13 uses of the "{0}={1}" -f composite-format
