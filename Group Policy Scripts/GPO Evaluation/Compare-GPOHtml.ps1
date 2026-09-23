@@ -93,7 +93,7 @@ no deprecated matches are reported.
 
 .NOTES
 Author:  Siconic
-Version: 1.2
+Version: 1.3
 
 Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
 schema (something that could break a workflow built on the old output).
@@ -101,6 +101,10 @@ MINOR bumps are bug fixes and additions that don't change existing columns
 or behavior. GPOCompareHtml.psm1 is versioned in lockstep with this script.
 
 Changelog:
+  1.3 - GPOCompareHtml.psm1: replaced all 4 uses of the "{0}={1}" -f
+        composite-format operator with plain string interpolation,
+        matching the same fix already applied to GPOCompare.psm1 for the
+        same reported error.
   1.2 - GPOCompareHtml.psm1: fixed the actual reported source of "The
         property 'Count' cannot be found on this object" - Get-AllTags (26
         call sites) and Get-HeadingAncestors (4 call sites) both return an
