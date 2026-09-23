@@ -26,9 +26,18 @@
 # COM interop calls in particular should be treated as the highest-risk
 # part of this file until you run it.
 #
-# Version 1.3
+# Version 1.4
 #
 # Changelog:
+#   1.4 - Fixed Get-Attribute: it used getAttributeNode(name), which is
+#         case-sensitive in the document mode the HTMLFile COM object
+#         negotiates, while gpresult writes the colspan attribute
+#         lowercase and the call site queried it as 'colSpan'. This
+#         silently broke every nested-detail-table lookup (Get-Attribute
+#         returned null instead of throwing), which is why FirewallRules.csv
+#         came back empty with no error. Switched to getAttribute(name),
+#         which is case-insensitive for HTML attributes, and normalized
+#         the call sites to lowercase 'colspan' for defense in depth.
 #   1.3 - Replaced all 4 uses of the "{0}={1}" -f composite-format
 #         operator with plain string interpolation, matching the same fix
 #         already applied to GPOCompare.psm1 (the XML side) for the same
@@ -265,13 +274,20 @@ function Get-Attribute {
         return $null
     }
 
+    # getAttribute (not getAttributeNode) is used deliberately: it is
+    # case-insensitive for HTML attribute names across IE document modes,
+    # while getAttributeNode was found to be case-sensitive in the mode the
+    # HTMLFile COM object negotiates - gpresult writes "colspan" lowercase,
+    # and a mismatched-case lookup here silently returned null for every
+    # row, which broke every nested-detail-table lookup (Firewall rules,
+    # Administrative Template list values) without ever throwing an error.
     try
     {
-        $Node = $Element.getAttributeNode($Name)
+        $Value = $Element.getAttribute($Name)
 
-        if ($null -ne $Node)
+        if ($null -ne $Value)
         {
-            return $Node.value
+            return [string]$Value
         }
     }
     catch
@@ -710,7 +726,7 @@ function Get-NestedDetailRows {
         return @()
     }
 
-    $ColSpan = Get-Attribute -Element $Cells[0] -Name 'colSpan'
+    $ColSpan = Get-Attribute -Element $Cells[0] -Name 'colspan'
 
     if ([string]::IsNullOrWhiteSpace($ColSpan) -or [int]$ColSpan -lt 2)
     {
@@ -875,7 +891,7 @@ function Parse-StandardPolicyTable {
             continue
         }
 
-        $ColSpan = Get-Attribute -Element $Cells[0] -Name 'colSpan'
+        $ColSpan = Get-Attribute -Element $Cells[0] -Name 'colspan'
 
         if (-not [string]::IsNullOrWhiteSpace($ColSpan) -and [int]$ColSpan -ge 2)
         {
@@ -1787,4 +1803,3 @@ Export-ModuleMember -Function @(
     'Import-DeprecatedPolicyReference',
     'Get-DeprecatedPolicyMatches'
 )
-
