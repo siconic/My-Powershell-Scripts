@@ -312,8 +312,7 @@ did and didn't catch.
   one row per proposed policy, each name linked to its worksheet); one
   worksheet per proposed policy, in plan order, titled with the full
   policy name, with a "Back to Summary" link and a frozen title and
-  header (worksheet names are "P01 " + a shortened name, because Excel
-  allows 31 characters; -PolicyNamePrefix is left out of them); then
+  header; then
   Conflicts and NotMigrated. A settings policy's worksheet has only the
   columns needed to build it, in this order: Class, WinningGPO (HTML
   only), IntuneType, IntuneSetting, Value, MappingStatus, Confidence (no
@@ -329,9 +328,20 @@ did and didn't catch.
   different order grouped together, `=` text kept as text. Also run on
   HTML-script CSV output and on a compare workbook with a prefix, and a
   folder with two runs stopped without `-FilePrefix`. Checked in Excel:
-  13 worksheets in order (Summary, P01-P10, Conflicts, NotMigrated), all
-  names within 31 characters, every Summary link resolved, a policy link
-  opened its worksheet and "Back to Summary" returned. Not yet run on
+  13 worksheets in order (Summary, 10 policies, Conflicts, NotMigrated),
+  all names within 31 characters, every Summary link resolved, a policy
+  link opened its worksheet and "Back to Summary" returned. Worksheet
+  names are simple "<group> - <type>" names: "Baseline - Settings",
+  "Shared 1 - Firewall Rules" (shared groups are numbered, their GPOs are
+  in the plan), "Windows 11 - User Settings" (Device is the default scope;
+  types: Settings, Firewall, Firewall Rules, Account Protection, Attack
+  Surface, Antivirus, Disk Encryption, LAPS, Review, Needs Mapping,
+  Scripts). Each GPO gets one short label for all its worksheets: its name
+  cut at the last whole word within 14 characters, with a number when two
+  GPOs would get the same label ("Workstation", "Workstation 2").
+  -PolicyNamePrefix is left out of worksheet names. Tested with short,
+  long and colliding GPO names: all names within 31 characters and every
+  Summary link resolved. Not yet run on
   real GPO exports.
 
 ## Intune mapping import (Import-IntuneMappingWorkbook.ps1) - current: 1.0

@@ -57,10 +57,14 @@ Summary
     worksheet. The Baseline source (CommonSettings, or calculated) is
     shown with the counts.
 
-One worksheet per proposed policy (P01, P02, ... in plan order)
-    Titled with the full policy name, with a link back to Summary. Excel
-    limits worksheet names to 31 characters, so the name is the number and
-    a shortened policy name (for example "P01 Baseline Dev SC"). A settings
+One worksheet per proposed policy, in plan order
+    Titled with the full policy name, with a link back to Summary. The
+    worksheet name is a simple "<group> - <type>" name, for example
+    "Baseline - Settings", "GPO-A - User Settings" or "Shared 1 - Firewall
+    Rules" (shared groups are numbered; their GPOs are in the plan).
+    Excel limits worksheet names to 31 characters, so a long GPO name is
+    cut at the last whole word that fits (the type is kept), and a
+    repeated name gets " (2)". A settings
     policy has only the columns needed to build it, in this order: Class,
     WinningGPO (HTML only), IntuneType, IntuneSetting, Value,
     MappingStatus, Confidence. A firewall rules policy has a Conflict flag
@@ -520,51 +524,177 @@ function Write-PlanSheet
 function Get-PolicySheetName
 {
     param(
-        [int]$Number,
+        [Parameter(Mandatory)]
+        [string]$Tier,
 
         [Parameter(Mandatory)]
-        [string]$PolicyName
+        [string[]]$Sources,
+
+        [Parameter(Mandatory)]
+        [string]$Scope,
+
+        [Parameter(Mandatory)]
+        [string]$PolicyType,
+
+        # GPO set -> "Shared N" number.
+        [Parameter(Mandatory)]
+        [hashtable]$SharedNumbers,
+
+        # GPO -> its short worksheet label (Get-SourceSheetLabels), the same
+        # on all of that GPO's worksheets.
+        [Parameter(Mandatory)]
+        [hashtable]$SourceLabels,
+
+        # Worksheet names already used (keys; case ignored).
+        [Parameter(Mandatory)]
+        [hashtable]$UsedNames
     )
 
-    # Excel worksheet names are at most 31 characters and cannot contain
-    # [ ] : * ? / \. The name is "P" + number + a shortened policy name;
-    # the number keeps it unique. The full name is the sheet's title.
-    $Short = $PolicyName
+    # A simple name, "<group> - <type>": "Baseline - Settings",
+    # "GPO-A - User Settings", "Shared 1 - Firewall Rules". Device is the
+    # default scope, so only User (or Unknown) is named. Excel allows 31
+    # characters and no [ ] : * ? / \ in a worksheet name. The type is
+    # always kept whole; a long GPO name is cut at the last whole word that
+    # fits. The full policy name is the worksheet's title.
+    $TypeNames = @{
+        'Settings Catalog'                             = 'Settings'
+        'Endpoint security - Firewall'                 = 'Firewall'
+        'Endpoint security - Firewall rules'           = 'Firewall Rules'
+        'Endpoint security - Account protection'       = 'Account Protection'
+        'Endpoint security - Attack surface reduction' = 'Attack Surface'
+        'Endpoint security - Antivirus'                = 'Antivirus'
+        'Endpoint security - Disk encryption'          = 'Disk Encryption'
+        'Endpoint security - LAPS'                     = 'LAPS'
+        'Needs review (no direct Intune policy)'       = 'Review'
+        'Needs mapping'                                = 'Needs Mapping'
+        'Remediation script'                           = 'Scripts'
+    }
 
-    # Hashtables, not @('from', 'to') pairs: inside @( ) PowerShell flattens
-    # nested arrays into one list of strings.
-    $Replacements = @(
-        @{ From = ' - Device - ';                            To = ' Dev ' }
-        @{ From = ' - User - ';                              To = ' User ' }
-        @{ From = ' - Unknown - ';                           To = ' Unk ' }
-        @{ From = 'Endpoint security - ';                    To = 'ES ' }
-        @{ From = 'Settings Catalog';                        To = 'SC' }
-        @{ From = 'Account protection';                      To = 'Acct' }
-        @{ From = 'Attack surface reduction';                To = 'ASR' }
-        @{ From = 'Disk encryption';                         To = 'Disk enc' }
-        @{ From = 'Firewall rules';                          To = 'FW rules' }
-        @{ From = 'Firewall';                                To = 'FW' }
-        @{ From = 'Needs review (no direct Intune policy)';  To = 'Review' }
-        @{ From = 'Needs mapping';                           To = 'Unmapped' }
-        @{ From = 'Remediation script';                      To = 'Script' }
-        @{ From = ' + ';                                     To = '+' }
-        @{ From = 'Only ';                                   To = '' }
+    $Type = if ($TypeNames.ContainsKey($PolicyType)) { $TypeNames[$PolicyType] } else { $PolicyType }
+
+    if ($Scope -ne 'Device')
+    {
+        $Type = "$Scope $Type"
+    }
+
+    $Suffix   = " - $($Type -replace '[\[\]:\*\?/\\]', '')"
+    $MaxGroup = [Math]::Max(1, 31 - $Suffix.Length)
+
+    switch ($Tier)
+    {
+        'Baseline'
+        {
+            $GroupName = 'Baseline'
+        }
+        'Single'
+        {
+            $GroupName = if ($SourceLabels.ContainsKey($Sources[0])) { $SourceLabels[$Sources[0]] } else { $Sources[0] }
+        }
+        default
+        {
+            # Always a number, so one GPO set has the same name on each of
+            # its worksheets. Its GPOs are listed in the plan on Summary.
+            $SetKey = $Sources -join $Sep
+
+            if (-not $SharedNumbers.ContainsKey($SetKey))
+            {
+                $SharedNumbers[$SetKey] = $SharedNumbers.Count + 1
+            }
+
+            $GroupName = "Shared $($SharedNumbers[$SetKey])"
+        }
+    }
+
+    $GroupName = ($GroupName -replace '[\[\]:\*\?/\\]', '').Trim().Trim("'")
+    $Name      = "$(Get-WordCut -Text $GroupName -MaxLength $MaxGroup)$Suffix"
+
+    # Unique (case ignored) and not the name of another worksheet: a number
+    # is added to the group part, so the type stays whole
+    # ("Workstation 2 - Firewall Rules").
+    $Copy = 1
+
+    while ($UsedNames.ContainsKey($Name) -or ($Name -in @('Summary', 'Conflicts', 'NotMigrated', 'History')))
+    {
+        $Copy++
+        $Number = " $Copy"
+        $Name   = "$(Get-WordCut -Text $GroupName -MaxLength ($MaxGroup - $Number.Length))$Number$Suffix"
+    }
+
+    $UsedNames[$Name] = $true
+
+    return $Name
+}
+
+function Get-SourceSheetLabels
+{
+    param(
+        [AllowNull()]
+        [string[]]$Sources
     )
 
-    foreach ($Replacement in $Replacements)
+    # GPO -> a short label for its worksheet names: the name cut at the
+    # last whole word within 14 characters, which fits beside almost every
+    # type within Excel's 31 characters. Two GPOs with the same label get a
+    # number ("Workstation", "Workstation 2"), so each GPO has one label on
+    # all its worksheets.
+    $MaxLength = 14
+    $Labels    = @{}
+    $Used      = @{}
+
+    foreach ($Source in @($Sources))
     {
-        $Short = $Short.Replace($Replacement.From, $Replacement.To)
+        $Clean = ("$Source" -replace '[\[\]:\*\?/\\]', '').Trim().Trim("'")
+        $Label = Get-WordCut -Text $Clean -MaxLength $MaxLength
+        $Copy  = 1
+
+        while ($Used.ContainsKey($Label) -or ($Label -eq 'Baseline') -or ($Label -match '^Shared \d+$'))
+        {
+            $Copy++
+            $Number = " $Copy"
+            $Label  = "$(Get-WordCut -Text $Clean -MaxLength ($MaxLength - $Number.Length))$Number"
+        }
+
+        $Used[$Label]    = $true
+        $Labels[$Source] = $Label
     }
 
-    $Short = ($Short -replace '[\[\]:\*\?/\\]', '').Trim().Trim("'")
-    $Name  = "P$("$Number".PadLeft(2, '0')) $Short"
+    return $Labels
+}
 
-    if ($Name.Length -gt 31)
+function Get-WordCut
+{
+    param(
+        [AllowEmptyString()]
+        [string]$Text,
+
+        [int]$MaxLength
+    )
+
+    # The text, cut at the last whole word that fits in MaxLength
+    # characters (or at MaxLength when the first word is longer).
+    if ($MaxLength -lt 1)
     {
-        $Name = $Name.Substring(0, 31)
+        $MaxLength = 1
     }
 
-    return $Name.TrimEnd().TrimEnd("'")
+    if ($Text.Length -le $MaxLength)
+    {
+        return $Text
+    }
+
+    $Cut       = $Text.Substring(0, $MaxLength + 1)
+    $LastSpace = $Cut.LastIndexOf(' ')
+
+    if ($LastSpace -ge 3)
+    {
+        $Cut = $Cut.Substring(0, $LastSpace)
+    }
+    else
+    {
+        $Cut = $Text.Substring(0, $MaxLength)
+    }
+
+    return $Cut.TrimEnd(' ', '-', '+', '_', '.', ',', "'")
 }
 
 function Write-SummarySheet
@@ -1059,10 +1189,15 @@ $OrderedGroups =
             @{ Expression = { $_.PolicyType } }
     )
 
-# Shared groups with long GPO lists get a number instead of the list.
-$SharedNumbers = @{}
-$PolicyPlan    = [System.Collections.ArrayList]::new()
-$PolicyNumber  = 0
+# Shared groups with long GPO lists get a number instead of the list, in
+# the policy name and (separately, when the names do not fit in 31
+# characters) in the worksheet name.
+$SharedNumbers      = @{}
+$SheetSharedNumbers = @{}
+$UsedSheetNames     = @{}
+$SourceSheetLabels  = Get-SourceSheetLabels -Sources $AllSources
+$PolicyPlan         = [System.Collections.ArrayList]::new()
+$PolicyNumber       = 0
 
 foreach ($Group in $OrderedGroups)
 {
@@ -1127,9 +1262,17 @@ foreach ($Group in $OrderedGroups)
     }
 
     $PolicyName = "$($PolicyNamePrefix)$GroupLabel - $($Group.Scope) - $($Group.PolicyType)"
-    # The worksheet name leaves out -PolicyNamePrefix: it is the same on
-    # every sheet and would use up the 31-character limit.
-    $SheetName  = Get-PolicySheetName -Number $PolicyNumber -PolicyName "$GroupLabel - $($Group.Scope) - $($Group.PolicyType)"
+    # The worksheet name is a simple "<group> - <type>" name and leaves out
+    # -PolicyNamePrefix, which is the same on every sheet.
+    $SheetName  =
+        Get-PolicySheetName `
+            -Tier $Tier `
+            -Sources $Sources `
+            -Scope $Group.Scope `
+            -PolicyType $Group.PolicyType `
+            -SharedNumbers $SheetSharedNumbers `
+            -SourceLabels $SourceSheetLabels `
+            -UsedNames $UsedSheetNames
 
     $Group | Add-Member -NotePropertyName PolicyName -NotePropertyValue $PolicyName
     $Group | Add-Member -NotePropertyName SheetName  -NotePropertyValue $SheetName
