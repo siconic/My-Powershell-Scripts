@@ -22,16 +22,19 @@ Grouping:
       Baseline   in CommonSettings: assigned to all devices / all users
       Shared     in two or more GPOs, but not in CommonSettings
       Single     in one GPO
-- Each group is split by scope (Device for Computer settings, User for
-  User settings) and by Intune policy type (Settings Catalog, Endpoint
-  security - Firewall, Endpoint security - Account protection, ...),
-  because one Intune policy holds one type and is assigned to one kind of
-  group. The type comes from the IntuneType column (see
-  $PolicyTypeRules).
+- One proposed policy per PresentIn group: all settings and firewall
+  rules with the same set of GPOs are in one policy and one worksheet,
+  device and user settings and all Intune types together. The Class and
+  PolicyType columns show how to split it when the policies are built in
+  Intune (one Intune policy holds one type and is assigned to devices or
+  users); the rows are sorted by them. PolicyType comes from the
+  IntuneType column (see $PolicyTypeRules): Settings Catalog, Endpoint
+  security - Firewall, Endpoint security - Account protection, ...
 - A GPO with several values for one setting (for example user rights
   members) is compared as the whole set of values.
 - Firewall rules are grouped the same way, by rule name + direction + all
-  rule fields, into "Endpoint security - Firewall rules" policies.
+  rule fields, and are in the policy of their PresentIn group (PolicyType
+  "Endpoint security - Firewall rules").
 
 Not placed in a policy:
 - Deprecated settings (Deprecated = Yes), and settings mapped as
@@ -57,19 +60,17 @@ Summary
     worksheet. The Baseline source (CommonSettings, or calculated) is
     shown with the counts.
 
-One worksheet per proposed policy, in plan order
+One worksheet per proposed policy (PresentIn group), in plan order
     Titled with the full policy name, with a link back to Summary. The
-    worksheet name is a simple "<group> - <type>" name, for example
-    "Baseline - Settings", "GPO-A - User Settings" or "Shared 1 - Firewall
-    Rules" (shared groups are numbered; their GPOs are in the plan).
-    Excel limits worksheet names to 31 characters, so a long GPO name is
-    cut at the last whole word that fits (the type is kept), and a
-    repeated name gets " (2)". A settings
-    policy has only the columns needed to build it, in this order: Class,
-    WinningGPO (HTML only), IntuneType, IntuneSetting, Value,
-    MappingStatus, Confidence. A firewall rules policy has a Conflict flag
-    and the rule fields. The GPOs or reports of each policy are on the
-    Summary.
+    worksheet is named "Baseline", "Shared 1", "Shared 2", ... (their GPOs
+    are in the plan on Summary) or after its single GPO; Excel limits
+    worksheet names to 31 characters, so a long GPO name is cut at the
+    last whole word that fits, and two GPOs with the same name get a
+    number. The settings table has only the columns needed to build the
+    policies, in this order: Class, PolicyType, WinningGPO (HTML only),
+    IntuneType, IntuneSetting, Value, MappingStatus, Confidence, sorted by
+    Class and PolicyType. Firewall rules are in a second table below it,
+    titled "Firewall Rules", with a Conflict flag and the rule fields.
 
 Conflicts
     Settings and firewall rules configured differently in different GPOs.
@@ -454,24 +455,14 @@ function Write-PlanSheet
         [string]$Name,
 
         [AllowNull()]
-        [object[]]$Rows,
-
-        # Optional title in row 1, above the table, with a link back to the
-        # Summary worksheet.
-        [string]$Title,
-
-        [string]$TableName
+        [object[]]$Rows
     )
 
-    # One worksheet as a blue Excel table with a frozen header row, text
-    # kept as text.
+    # One worksheet (Conflicts, NotMigrated) as a blue Excel table with a
+    # frozen header row, text kept as text. Policy worksheets are written
+    # by Write-PolicySheet.
     $SheetRows = @($Rows)
     $TextCells = @()
-
-    if ([string]::IsNullOrWhiteSpace($TableName))
-    {
-        $TableName = "$($Name)Table"
-    }
 
     if ($SheetRows.Count -eq 0)
     {
@@ -485,38 +476,111 @@ function Write-PlanSheet
         $script:TruncatedCells += $Converted.Truncated
     }
 
-    if ([string]::IsNullOrWhiteSpace($Title))
-    {
-        $Package = $SheetRows |
-            Export-Excel -Path $Path -WorksheetName $Name -TableName $TableName -TableStyle Medium2 -FreezeTopRow -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
-
-        $RowOffset = 0
-    }
-    else
-    {
-        # Title in row 1, table header in row 2; rows 1-2 stay visible.
-        $Package = $SheetRows |
-            Export-Excel -Path $Path -WorksheetName $Name -Title $Title -TitleBold -TitleSize 14 -TableName $TableName -TableStyle Medium2 -FreezePane 3, 1 -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
-
-        $RowOffset = 1
-    }
+    $Package = $SheetRows |
+        Export-Excel -Path $Path -WorksheetName $Name -TableName "$($Name)Table" -TableStyle Medium2 -FreezeTopRow -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
 
     $Worksheet = $Package.Workbook.Worksheets[$Name]
 
     foreach ($TextCell in $TextCells)
     {
-        # Parentheses needed: the comma binds more tightly than +.
-        $Cell         = $Worksheet.Cells[($TextCell.Row + $RowOffset), $TextCell.Column]
+        $Cell         = $Worksheet.Cells[$TextCell.Row, $TextCell.Column]
         $Cell.Formula = ""
         $Cell.Value   = $TextCell.Value
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($Title))
+    Close-ExcelPackage -ExcelPackage $Package
+}
+
+function Write-PolicySheet
+{
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+
+        [Parameter(Mandatory)]
+        [string]$Name,
+
+        [Parameter(Mandatory)]
+        [string]$Title,
+
+        [int]$Number,
+
+        [AllowNull()]
+        [object[]]$SettingRows,
+
+        [AllowNull()]
+        [object[]]$RuleRows
+    )
+
+    # One policy's worksheet: the policy name as title in row 1, the
+    # settings table from row 2 and, below it, the firewall rules table with
+    # its own title (or from row 2 when there are no settings). Settings and
+    # firewall rules have different columns, so they are separate tables.
+    # A link back to Summary is in row 1.
+    $Sections = @()
+
+    if (@($SettingRows).Count -gt 0)
     {
-        # Above the last table column, so it does not cover the title.
-        $LastColumn = @($SheetRows[0].PSObject.Properties).Count
-        Set-LinkCell -Cell $Worksheet.Cells[1, [Math]::Max(2, $LastColumn)] -Worksheet 'Summary' -Text 'Back to Summary'
+        $Sections += @{ Rows = @($SettingRows); TableName = "Policy$($Number)Settings"; Heading = '' }
     }
+
+    if (@($RuleRows).Count -gt 0)
+    {
+        $Sections += @{ Rows = @($RuleRows); TableName = "Policy$($Number)FirewallRules"; Heading = $(if ($Sections.Count -gt 0) { 'Firewall Rules' } else { '' }) }
+    }
+
+    if ($Sections.Count -eq 0)
+    {
+        $Sections += @{ Rows = @([PSCustomObject]@{ Result = "No rows" }); TableName = "Policy$($Number)Settings"; Heading = '' }
+    }
+
+    $Package    = $null
+    $NextRow    = 1
+    $MaxColumns = 1
+
+    foreach ($Section in $Sections)
+    {
+        $Converted = ConvertTo-ExcelSheetRows -Rows $Section.Rows
+        $Rows      = @($Converted.Rows)
+        $script:TruncatedCells += $Converted.Truncated
+        $MaxColumns = [Math]::Max($MaxColumns, @($Rows[0].PSObject.Properties).Count)
+
+        if ($null -eq $Package)
+        {
+            # Title in row 1, header in row 2; rows 1-2 stay visible.
+            $Package = $Rows |
+                Export-Excel -Path $Path -WorksheetName $Name -Title $Title -TitleBold -TitleSize 14 -TableName $Section.TableName -TableStyle Medium2 -FreezePane 3, 1 -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
+
+            $HeaderRow = 2
+        }
+        else
+        {
+            # One empty row, the section title, then the table.
+            $TitleRow = $NextRow + 1
+
+            $Package = $Rows |
+                Export-Excel -ExcelPackage $Package -WorksheetName $Name -StartRow $TitleRow -Title $Section.Heading -TitleBold -TitleSize 12 -TableName $Section.TableName -TableStyle Medium2 -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
+
+            $HeaderRow = $TitleRow + 1
+        }
+
+        $Worksheet = $Package.Workbook.Worksheets[$Name]
+
+        # Text starting with "=" back as text. TextCells rows count the
+        # header as row 1. Parentheses needed: the comma binds more tightly
+        # than +.
+        foreach ($TextCell in @($Converted.TextCells))
+        {
+            $Cell         = $Worksheet.Cells[($TextCell.Row + $HeaderRow - 1), $TextCell.Column]
+            $Cell.Formula = ""
+            $Cell.Value   = $TextCell.Value
+        }
+
+        $NextRow = $HeaderRow + $Rows.Count + 1
+    }
+
+    # Above the last column, so it does not cover the title.
+    Set-LinkCell -Cell $Worksheet.Cells[1, [Math]::Max(2, $MaxColumns)] -Worksheet 'Summary' -Text 'Back to Summary'
 
     Close-ExcelPackage -ExcelPackage $Package
 }
@@ -530,18 +594,11 @@ function Get-PolicySheetName
         [Parameter(Mandatory)]
         [string[]]$Sources,
 
-        [Parameter(Mandatory)]
-        [string]$Scope,
-
-        [Parameter(Mandatory)]
-        [string]$PolicyType,
-
         # GPO set -> "Shared N" number.
         [Parameter(Mandatory)]
         [hashtable]$SharedNumbers,
 
-        # GPO -> its short worksheet label (Get-SourceSheetLabels), the same
-        # on all of that GPO's worksheets.
+        # GPO -> its worksheet label (Get-SourceSheetLabels).
         [Parameter(Mandatory)]
         [hashtable]$SourceLabels,
 
@@ -550,35 +607,12 @@ function Get-PolicySheetName
         [hashtable]$UsedNames
     )
 
-    # A simple name, "<group> - <type>": "Baseline - Settings",
-    # "GPO-A - User Settings", "Shared 1 - Firewall Rules". Device is the
-    # default scope, so only User (or Unknown) is named. Excel allows 31
-    # characters and no [ ] : * ? / \ in a worksheet name. The type is
-    # always kept whole; a long GPO name is cut at the last whole word that
-    # fits. The full policy name is the worksheet's title.
-    $TypeNames = @{
-        'Settings Catalog'                             = 'Settings'
-        'Endpoint security - Firewall'                 = 'Firewall'
-        'Endpoint security - Firewall rules'           = 'Firewall Rules'
-        'Endpoint security - Account protection'       = 'Account Protection'
-        'Endpoint security - Attack surface reduction' = 'Attack Surface'
-        'Endpoint security - Antivirus'                = 'Antivirus'
-        'Endpoint security - Disk encryption'          = 'Disk Encryption'
-        'Endpoint security - LAPS'                     = 'LAPS'
-        'Needs review (no direct Intune policy)'       = 'Review'
-        'Needs mapping'                                = 'Needs Mapping'
-        'Remediation script'                           = 'Scripts'
-    }
-
-    $Type = if ($TypeNames.ContainsKey($PolicyType)) { $TypeNames[$PolicyType] } else { $PolicyType }
-
-    if ($Scope -ne 'Device')
-    {
-        $Type = "$Scope $Type"
-    }
-
-    $Suffix   = " - $($Type -replace '[\[\]:\*\?/\\]', '')"
-    $MaxGroup = [Math]::Max(1, 31 - $Suffix.Length)
+    # A simple name for one PresentIn group: "Baseline", "Shared 1",
+    # "Shared 2", ... (their GPOs are listed in the plan on Summary), or the
+    # GPO's name for a single GPO. Excel allows 31 characters and no
+    # [ ] : * ? / \ in a worksheet name; a long GPO name is cut at the last
+    # whole word that fits. The full policy name is the worksheet's title.
+    $MaxGroup = 31
 
     switch ($Tier)
     {
@@ -592,8 +626,8 @@ function Get-PolicySheetName
         }
         default
         {
-            # Always a number, so one GPO set has the same name on each of
-            # its worksheets. Its GPOs are listed in the plan on Summary.
+            # Always a number: the GPO names of a shared group rarely fit in
+            # 31 characters. Its GPOs are listed in the plan on Summary.
             $SetKey = $Sources -join $Sep
 
             if (-not $SharedNumbers.ContainsKey($SetKey))
@@ -606,18 +640,16 @@ function Get-PolicySheetName
     }
 
     $GroupName = ($GroupName -replace '[\[\]:\*\?/\\]', '').Trim().Trim("'")
-    $Name      = "$(Get-WordCut -Text $GroupName -MaxLength $MaxGroup)$Suffix"
+    $Name      = Get-WordCut -Text $GroupName -MaxLength $MaxGroup
 
-    # Unique (case ignored) and not the name of another worksheet: a number
-    # is added to the group part, so the type stays whole
-    # ("Workstation 2 - Firewall Rules").
+    # Unique (case ignored) and not the name of another worksheet.
     $Copy = 1
 
     while ($UsedNames.ContainsKey($Name) -or ($Name -in @('Summary', 'Conflicts', 'NotMigrated', 'History')))
     {
         $Copy++
         $Number = " $Copy"
-        $Name   = "$(Get-WordCut -Text $GroupName -MaxLength ($MaxGroup - $Number.Length))$Number$Suffix"
+        $Name   = "$(Get-WordCut -Text $GroupName -MaxLength ($MaxGroup - $Number.Length))$Number"
     }
 
     $UsedNames[$Name] = $true
@@ -632,12 +664,11 @@ function Get-SourceSheetLabels
         [string[]]$Sources
     )
 
-    # GPO -> a short label for its worksheet names: the name cut at the
-    # last whole word within 14 characters, which fits beside almost every
-    # type within Excel's 31 characters. Two GPOs with the same label get a
-    # number ("Workstation", "Workstation 2"), so each GPO has one label on
-    # all its worksheets.
-    $MaxLength = 14
+    # GPO -> the name of its worksheet: the GPO name cut at the last whole
+    # word within Excel's 31 characters. Two GPOs with the same label get a
+    # number ("Workstation", "Workstation 2"); "Baseline", "Shared N" and
+    # the other worksheet names are avoided.
+    $MaxLength = 31
     $Labels    = @{}
     $Used      = @{}
 
@@ -647,7 +678,7 @@ function Get-SourceSheetLabels
         $Label = Get-WordCut -Text $Clean -MaxLength $MaxLength
         $Copy  = 1
 
-        while ($Used.ContainsKey($Label) -or ($Label -eq 'Baseline') -or ($Label -match '^Shared \d+$'))
+        while ($Used.ContainsKey($Label) -or ($Label -in @('Baseline', 'Summary', 'Conflicts', 'NotMigrated', 'History')) -or ($Label -match '^Shared \d+$'))
         {
             $Copy++
             $Number = " $Copy"
@@ -1151,24 +1182,27 @@ foreach ($RuleKey in $RuleConfigs.Keys)
 }
 
 # ------------------------------------------------------------
-# Proposed policies: GPO set + scope + policy type
+# Proposed policies: one per PresentIn group
 # ------------------------------------------------------------
 
+# One policy per group of settings with the same PresentIn (the same set of
+# GPOs): the Baseline (CommonSettings), each shared GPO set, and each
+# single GPO. Device and user settings and all Intune types of a group
+# are in its one policy; the Class and PolicyType columns on its worksheet
+# show how to split it when the policies are built in Intune.
 $PolicyGroups = [ordered]@{}
 
 foreach ($Item in @($PlacedSettings) + @($PlacedRules))
 {
-    $PolicyKey = "$($Item.SourceKey)$Sep$($Item.Scope)$Sep$($Item.PolicyType)"
+    $PolicyKey = $Item.SourceKey
 
     if (-not $PolicyGroups.Contains($PolicyKey))
     {
-        # A Baseline policy applies to all devices or users, so its GPOs are
-        # all of them.
+        # A Baseline policy applies to all devices and users, so its GPOs
+        # are all of them.
         $PolicyGroups[$PolicyKey] = [PSCustomObject]@{
             Sources    = if ($Item.IsBaseline) { $AllSources } else { $Item.Sources }
             IsBaseline = $Item.IsBaseline
-            Scope      = $Item.Scope
-            PolicyType = $Item.PolicyType
             Items      = [System.Collections.ArrayList]::new()
         }
     }
@@ -1176,22 +1210,18 @@ foreach ($Item in @($PlacedSettings) + @($PlacedRules))
     [void]$PolicyGroups[$PolicyKey].Items.Add($Item)
 }
 
-# Order: Baseline first, then most GPOs first, then by GPO names, scope
-# and type.
+# Order: Baseline first, then most GPOs first, then by GPO names.
 $OrderedGroups =
     @(
         $PolicyGroups.Values |
         Sort-Object `
             @{ Expression = { [int]$_.IsBaseline }; Descending = $true },
             @{ Expression = { @($_.Sources).Count }; Descending = $true },
-            @{ Expression = { @($_.Sources) -join '; ' } },
-            @{ Expression = { $_.Scope } },
-            @{ Expression = { $_.PolicyType } }
+            @{ Expression = { @($_.Sources) -join '; ' } }
     )
 
-# Shared groups with long GPO lists get a number instead of the list, in
-# the policy name and (separately, when the names do not fit in 31
-# characters) in the worksheet name.
+# Shared groups are numbered in the worksheet name ("Shared 1"), and in the
+# policy name when their GPO names are too long to list.
 $SharedNumbers      = @{}
 $SheetSharedNumbers = @{}
 $UsedSheetNames     = @{}
@@ -1217,8 +1247,25 @@ foreach ($Group in $OrderedGroups)
         $Tier = 'Single'
     }
 
-    # Who the policy is assigned to.
-    $ScopeGroup = if ($Group.Scope -eq 'User') { 'users' } else { 'devices' }
+    $Scopes      = @($Group.Items | ForEach-Object { $_.Scope } | Sort-Object -Unique)
+    $PolicyTypes = @($Group.Items | ForEach-Object { $_.PolicyType } | Sort-Object -Unique)
+
+    # Who the policy is assigned to: devices, users, or both.
+    $HasUser   = $Scopes -contains 'User'
+    $HasDevice = @($Scopes | Where-Object { $_ -ne 'User' }).Count -gt 0
+
+    if ($HasUser -and $HasDevice)
+    {
+        $ScopeGroup = 'devices and users'
+    }
+    elseif ($HasUser)
+    {
+        $ScopeGroup = 'users'
+    }
+    else
+    {
+        $ScopeGroup = 'devices'
+    }
 
     if ($Group.IsBaseline)
     {
@@ -1226,7 +1273,7 @@ foreach ($Group in $OrderedGroups)
     }
     else
     {
-        $Assignment = "$((Get-Culture).TextInfo.ToTitleCase($ScopeGroup)) of: $($Sources -join '; ')"
+        $Assignment = "$($ScopeGroup.Substring(0, 1).ToUpper())$($ScopeGroup.Substring(1)) of: $($Sources -join '; ')"
     }
 
     switch ($Tier)
@@ -1261,15 +1308,14 @@ foreach ($Group in $OrderedGroups)
         }
     }
 
-    $PolicyName = "$($PolicyNamePrefix)$GroupLabel - $($Group.Scope) - $($Group.PolicyType)"
-    # The worksheet name is a simple "<group> - <type>" name and leaves out
-    # -PolicyNamePrefix, which is the same on every sheet.
-    $SheetName  =
+    $PolicyName = "$($PolicyNamePrefix)$GroupLabel"
+
+    # The worksheet name leaves out -PolicyNamePrefix, which is the same on
+    # every sheet.
+    $SheetName =
         Get-PolicySheetName `
             -Tier $Tier `
             -Sources $Sources `
-            -Scope $Group.Scope `
-            -PolicyType $Group.PolicyType `
             -SharedNumbers $SheetSharedNumbers `
             -SourceLabels $SourceSheetLabels `
             -UsedNames $UsedSheetNames
@@ -1296,8 +1342,8 @@ foreach ($Group in $OrderedGroups)
             Assignment          = $Assignment
             SourceCount         = $Sources.Count
             $SourceLabel        = $Sources -join '; '
-            Scope               = $Group.Scope
-            PolicyType          = $Group.PolicyType
+            Scopes              = $Scopes -join '; '
+            PolicyTypes         = $PolicyTypes -join '; '
             Settings            = $Settings.Count
             FirewallRules       = $Rules.Count
             ConflictingItems    = $Conflict
@@ -1310,31 +1356,29 @@ foreach ($Group in $OrderedGroups)
 # Worksheet rows
 # ------------------------------------------------------------
 
-# Only the columns needed to build the Intune policies. The source column
-# has the compare output's name: GPOName (XML) or ReportName (HTML).
-# WinningGPO exists only in HTML output.
+# Only the columns needed to build the Intune policies. The policy name is
+# the worksheet and the GPOs / reports are on the Summary, so neither is
+# repeated. WinningGPO exists only in HTML output.
 $HasWinningGpo = ($CandidateRows.Count -gt 0) -and ($null -ne $CandidateRows[0].PSObject.Properties['WinningGPO'])
 
-function Get-PolicySheetRows
+function Get-PolicySettingRows
 {
     param(
         [Parameter(Mandatory)]
         [object]$Group
     )
 
-    # The rows of one policy's worksheet. Settings: only the columns needed
-    # to build the Intune policy. Firewall rules: the rule fields.
-    $Settings = @($Group.Items | Where-Object { $null -eq $_.PSObject.Properties['Rule'] })
-    $Rules    = @($Group.Items | Where-Object { $null -ne $_.PSObject.Properties['Rule'] })
-
-    # The policy name is the worksheet, and the GPOs / reports are on the
-    # Summary, so neither is repeated here. Column order as requested:
-    # Class, WinningGPO (HTML only), IntuneType, IntuneSetting, Value,
+    # Settings of one policy, sorted by Class and PolicyType so each part
+    # to be built as its own Intune policy is together. Columns: Class,
+    # PolicyType, WinningGPO (HTML only), IntuneType, IntuneSetting, Value,
     # MappingStatus, Confidence.
-    foreach ($Item in @($Settings | Sort-Object Extension, Category, SettingName))
+    $Settings = @($Group.Items | Where-Object { $null -eq $_.PSObject.Properties['Rule'] })
+
+    foreach ($Item in @($Settings | Sort-Object Class, PolicyType, Extension, Category, SettingName))
     {
         $Out = [ordered]@{
-            Class = $Item.Class
+            Class      = $Item.Class
+            PolicyType = $Item.PolicyType
         }
 
         if ($HasWinningGpo)
@@ -1350,6 +1394,17 @@ function Get-PolicySheetRows
 
         [PSCustomObject]$Out
     }
+}
+
+function Get-PolicyRuleRows
+{
+    param(
+        [Parameter(Mandatory)]
+        [object]$Group
+    )
+
+    # Firewall rules of one policy: a Conflict flag and the rule fields.
+    $Rules = @($Group.Items | Where-Object { $null -ne $_.PSObject.Properties['Rule'] })
 
     foreach ($Item in @($Rules | Sort-Object { Get-PropertyValue $_.Rule @('Name') }))
     {
@@ -1466,12 +1521,13 @@ Write-SummarySheet -Path $WorkbookPath -Rows $SummaryRows -PlanRows @($PolicyPla
 
 foreach ($Group in $OrderedGroups)
 {
-    Write-PlanSheet `
+    Write-PolicySheet `
         -Path $WorkbookPath `
         -Name $Group.SheetName `
         -Title $Group.PolicyName `
-        -TableName "Policy$($Group.Number)Table" `
-        -Rows @(Get-PolicySheetRows -Group $Group)
+        -Number $Group.Number `
+        -SettingRows @(Get-PolicySettingRows -Group $Group) `
+        -RuleRows @(Get-PolicyRuleRows -Group $Group)
 }
 
 Write-PlanSheet -Path $WorkbookPath -Name 'Conflicts'   -Rows $ConflictRows

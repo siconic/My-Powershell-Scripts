@@ -282,68 +282,63 @@ did and didn't catch.
 ## Intune policy plan (New-IntunePolicyPlan.ps1) - current: 1.0
 
 - **1.0** - New script. Reads the output of Compare-GPOXml.ps1 or
-  Compare-GPOHtml.ps1 (IntuneMigrationCandidates and FirewallRules, from
-  the CSV files or the GPOCompare workbook) and writes
-  `IntunePolicyPlan.xlsx`, a proposed set of Intune policies. The Baseline
-  is taken from the compare script's CommonSettings report (plus
-  FirewallSettingsCommon for HTML output): a setting is Baseline when all
-  its value rows are in it. Baseline policies are assigned to all devices
-  (or all users); without CommonSettings in the input, a warning is shown
-  and the Baseline is calculated the same way. Every other setting with a
-  given value is grouped by the exact set of GPOs (or reports) that have
-  that value: Shared (two or more), Single (one). The policy plan has an
-  Assignment column (All devices / All users, or "Devices of: ..." /
-  "Users of: ..."), and the Summary shows the Baseline source. Tested:
-  with CommonSettings the Baseline followed it (a setting listed there
-  moved into the Baseline even though it was in only two GPOs); without it
-  the warning appeared and the same Baseline was calculated; real HTML
-  compare output (CSV and workbook) gave a Baseline exactly when
-  CommonSettings had rows. A GPO with several values for one setting is compared as the set
-  of values. Each group is split by scope (Device / User) and by Intune
-  policy type, taken from IntuneType with an editable keyword table
-  (`$PolicyTypeRules`: Firewall, Account protection, Attack surface
-  reduction, Antivirus, Disk encryption, LAPS, no direct mapping,
-  Settings Catalog, Remediation script; Unmapped settings go to "Needs
-  mapping"). Firewall rules are grouped the same way by name + direction
-  + rule fields. Deprecated and NoIntuneEquivalent settings go to
-  NotMigrated; settings and rules with different values in different GPOs
-  are listed on Conflicts. Worksheets (blue tables): Summary (the counts,
-  each linked to its worksheet or table, and below them the policy plan,
-  one row per proposed policy, each name linked to its worksheet); one
-  worksheet per proposed policy, in plan order, titled with the full
-  policy name, with a "Back to Summary" link and a frozen title and
-  header; then
-  Conflicts and NotMigrated. A settings policy's worksheet has only the
-  columns needed to build it, in this order: Class, WinningGPO (HTML
-  only), IntuneType, IntuneSetting, Value, MappingStatus, Confidence (no
-  policy name, GPO / report names or setting name; the GPOs of each
-  policy are on the Summary). A firewall rules policy's worksheet has a
-  Conflict flag and the rule fields. Conflicts (Kind, Scope, Item, Value,
-  GPOs, PolicyName) and NotMigrated (Reason, Class, Extension, Category,
-  SettingName, Value, GPOs) keep the full detail. `-PolicyNamePrefix` adds text to every policy name;
-  `-FilePrefix` picks one run when the folder has several. Run in Windows
-  PowerShell 5.1 with synthetic XML-format output (3 GPOs, one case per
-  rule): 10 policies (2 Baseline, 2 Shared, 6 Single) as worked out by
-  hand, conflicts and not-migrated settings listed, list values in a
-  different order grouped together, `=` text kept as text. Also run on
-  HTML-script CSV output and on a compare workbook with a prefix, and a
-  folder with two runs stopped without `-FilePrefix`. Checked in Excel:
-  13 worksheets in order (Summary, 10 policies, Conflicts, NotMigrated),
-  all names within 31 characters, every Summary link resolved, a policy
-  link opened its worksheet and "Back to Summary" returned. Worksheet
-  names are simple "<group> - <type>" names: "Baseline - Settings",
-  "Shared 1 - Firewall Rules" (shared groups are numbered, their GPOs are
-  in the plan), "Windows 11 - User Settings" (Device is the default scope;
-  types: Settings, Firewall, Firewall Rules, Account Protection, Attack
-  Surface, Antivirus, Disk Encryption, LAPS, Review, Needs Mapping,
-  Scripts). Each GPO gets one short label for all its worksheets: its name
-  cut at the last whole word within 14 characters, with a number when two
-  GPOs would get the same label ("Workstation", "Workstation 2").
-  -PolicyNamePrefix is left out of worksheet names. Tested with short,
-  long and colliding GPO names: all names within 31 characters and every
-  Summary link resolved. Not yet run on
-  real GPO exports.
-
+  Compare-GPOHtml.ps1 (IntuneMigrationCandidates, FirewallRules and
+  CommonSettings, from the CSV files or the GPOCompare workbook) and
+  writes `IntunePolicyPlan.xlsx`, a proposed set of Intune policies: one
+  policy per PresentIn group (the same set of GPOs or reports).
+  - Baseline: taken from CommonSettings (plus FirewallSettingsCommon for
+    HTML output); a setting is Baseline when all its value rows are in
+    it. Assigned to all devices / all users. Without CommonSettings in the
+    input, a warning is shown and the Baseline is calculated the same way.
+  - Every other setting with a given value belongs to the exact set of
+    GPOs that have that value (a GPO with several values for one setting
+    is compared as the set of values): Shared (two or more GPOs), Single
+    (one GPO). Firewall rules are grouped the same way by name +
+    direction + rule fields; a rule in every GPO is Baseline.
+  - One policy per group: device and user settings, all Intune types and
+    firewall rules of a group are in its one policy. PolicyType comes
+    from IntuneType with an editable keyword table (`$PolicyTypeRules`:
+    Firewall, Account protection, Attack surface reduction, Antivirus,
+    Disk encryption, LAPS, no direct mapping, Settings Catalog,
+    Remediation script; Unmapped settings are "Needs mapping").
+  - Deprecated and NoIntuneEquivalent settings go to NotMigrated;
+    settings and rules with different values in different GPOs are listed
+    on Conflicts.
+  - Worksheets (blue tables): Summary (counts linked to their worksheet
+    or table, the Baseline source, and below them the policy plan: one row
+    per policy with Worksheet, Tier, Assignment - "All devices", "All
+    users", "All devices and users", or "Devices / Users / Devices and
+    users of: ..." - GPOs, Scopes, PolicyTypes and counts, each policy
+    name linked to its worksheet); one worksheet per policy in plan order,
+    named "Baseline", "Shared 1", "Shared 2", ... or after its single GPO
+    (cut at the last whole word within Excel's 31 characters, numbered when
+    two GPOs match), titled with the full policy name, with a "Back to
+    Summary" link and a frozen title and header; then Conflicts (Kind,
+    Scope, Item, Value, GPOs, PolicyName) and NotMigrated (Reason, Class,
+    Extension, Category, SettingName, Value, GPOs).
+  - A policy worksheet has the settings table - only the columns needed
+    to build the policies: Class, PolicyType, WinningGPO (HTML only),
+    IntuneType, IntuneSetting, Value, MappingStatus, Confidence, sorted by
+    Class and PolicyType so each part to build as its own Intune policy is
+    together - and below it a "Firewall Rules" table (Conflict flag and
+    rule fields) when the group has firewall rules.
+  - `-PolicyNamePrefix` adds text to every policy name (not to worksheet
+    names); `-FilePrefix` picks one run when the folder has several.
+  - Run in Windows PowerShell 5.1 with synthetic XML-format output (3
+    GPOs, one case per rule): 5 policies (Baseline, Shared 1, and one per
+    GPO) as worked out by hand; a group with device and user settings got
+    "Devices and users of: ..."; the firewall rules table below the
+    settings with its title; conflicts and not-migrated settings listed;
+    list values in a different order grouped together; `=` text kept as
+    text. The Baseline followed CommonSettings (a setting listed there
+    moved into the Baseline even though it was in only two GPOs); without
+    CommonSettings the warning appeared and the same Baseline was
+    calculated. Also run on real HTML compare output (CSV and workbook: a
+    Baseline exactly when CommonSettings had rows), on a compare workbook
+    with a prefix, and on a folder with two runs (stopped without
+    `-FilePrefix`). Checked in Excel with short, long and colliding GPO
+    names: worksheet names within 31 characters, every Summary link
+    resolved, "Back to Summary" returned. Not yet run on real GPO exports.
 ## Intune mapping import (Import-IntuneMappingWorkbook.ps1) - current: 1.0
 
 - **1.0** - New script. Reads manual GPO-to-Intune mapping workbooks
