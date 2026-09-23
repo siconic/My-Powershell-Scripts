@@ -1,5 +1,7 @@
 # Deprecated and Legacy GPO Policy Reference
 
+Version: 1.0 (read by Compare-GPOXml.ps1 3.x and Compare-GPOHtml.ps1 1.x)
+
 Read by `Compare-GPOXml.ps1` through `Import-DeprecatedPolicyReference` in `GPOCompare.psm1`.
 Only the table rows below are used. All other text in this file is ignored, so notes can be added anywhere outside the table.
 

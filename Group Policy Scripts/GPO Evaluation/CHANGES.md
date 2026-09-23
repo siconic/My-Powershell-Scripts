@@ -1,60 +1,137 @@
-# GPO Compare - Version 3.0 change list
+# GPO Compare Toolset - Version History
 
-Not run: PowerShell was not available where these files were written, so nothing has been executed.
-Structure was checked (balanced braces/parentheses, every called function is defined, JSON valid, reference table parses to 12 entries).
-Test against real XML before relying on the output.
+Versioning convention (applies to both toolsets): MAJOR bumps mean
+restructured logic or a changed CSV/report schema - something that could
+break a workflow built on the old output. MINOR bumps are bug fixes and
+additions that don't change existing columns or behavior. A script and its
+paired module are always versioned in lockstep (Compare-GPOXml.ps1 +
+GPOCompare.psm1 share one version; Compare-GPOHtml.ps1 + GPOCompareHtml.psm1
+share another), since they're only ever used together.
 
-## What to expect on the first run
+Not run: PowerShell was not available where these files were written, so
+XML-side changes are structurally checked (balanced braces/parens, every
+called function defined) but not executed. HTML-side changes were also
+validated by re-implementing the same DOM-walk algorithm in Python against
+three real gpresult /h reports - see that toolset's changelog for what that
+did and didn't catch.
 
-- **Unclassified will no longer be 0.** Unsupported extensions and unsupported Security sub-sections are now reported instead of dropped. Review `UnclassifiedSettings.csv` and decide which to parse or ignore.
-- **Comparison results will change.** Lists are sorted before comparison, GPO totals now include only GPOs that parsed, and conflicts/unique/duplicates use new rules (below).
-- **Local Users and Groups "Membership Actions" rows changed.** SettingName is now `<group> member: <member>` and the value is the action.
+## XML toolset (Compare-GPOXml.ps1 + GPOCompare.psm1) - current: 3.2
 
-## Compare-GPOXml.ps1
+- **3.2** - Replaced all 13 uses of the `"{0}={1}" -f` composite-format
+  operator with plain string interpolation (a grep for ` -f ` with spaces
+  on both sides had missed 9 of the 13 - `-f` followed immediately by a
+  line break doesn't match that pattern). This was the reported source of
+  "error formatting a string: index (zero based) must be greater than or
+  equal to zero..." - string interpolation has no template/argument-list
+  mechanism to fail that way, so this removes the entire exception class
+  regardless of which of the 13 call sites was actually throwing.
+- **3.1** - Unsupported-extension Unclassified rows now carry a
+  SettingName, Value, and State per item (new `Get-UnknownExtensionItems`),
+  instead of one blank row per whole extension. Parser-error Reason text
+  now includes the module line number that threw, so a future error is
+  self-diagnosing from the CSV alone.
+- **3.0** - Full rework from the original script: GPO total based on
+  parsed files rather than settings found; conflict/unique/duplicate rules
+  fixed to require more than one GPO; list-style values (user rights, LUG
+  members, ADMX multi-value settings) sorted before comparison so element
+  order doesn't cause false conflicts; unsupported extensions and Security
+  sub-sections routed to Unclassified instead of dropped silently; Intune
+  mapping and deprecated-policy matching added; module path, encoding, and
+  `-LiteralPath` fixes; duplicate/dead function definitions removed.
 
-- GPO total comes from the files that parsed (a failed or empty GPO no longer inflates Common). GPOs with no settings produce a warning.
-- Stops with a clear error if no settings were parsed at all.
-- Conflicts: needs more than one GPO and different configurations. A GPO with several rows for one name is compared as a set.
-- Duplicates: adds `PresentIn`.
-- Unique: based on setting name (configured in some GPOs, not all), one row per distinct value, with `PresentIn`, `ConfiguredInGPOs`, `ValuesDiffer`.
-- CommonSettingsByName: adds `SameValueEverywhere`.
-- Comparison keys use a control-character separator instead of `|`. Matrix `Setting` column is `Class | Extension | Category | SettingName`.
-- Intune mapping: optional file (warn and continue if missing, error if present but invalid), most specific entry wins, ties go to the first entry in the file, results cached. New columns `Deprecated`, `RecommendedReplacement`. `MappingStatus` can be `Unmapped` or `MappingFileMissing`. `firewallRuleMapping` adds `IntuneType` to `FirewallRules.csv`.
-- Defaults for module, mapping and deprecated reference paths are next to the script (`$PSScriptRoot`). New parameters: `-IntuneMappingPath`, `-DeprecatedReferencePath`.
-- `-LiteralPath` / `-File` for file access, `-Encoding UTF8` on every CSV, every report file is always created (empty file when there is no data). `ParserFailures.csv` is in the validation list.
-- Warnings at the end for parse failures and unclassified entries. `RunStatistics.csv` adds `GPOsParsed`, `UnmappedSettings`.
-- Help block rewritten with valid keywords; the invalid "module setting" note removed.
+## HTML toolset (Compare-GPOHtml.ps1 + GPOCompareHtml.psm1) - current: 1.8
 
-## GPOCompare.psm1
+- **1.8** - Firewall profile, global and Windows Defender Firewall ADMX
+  settings moved out of the settings comparison files into
+  `FirewallSettingsCommon.csv` and `FirewallSettingsUnique.csv`. They stay
+  in `ParsedSettings.csv` and `IntuneMigrationCandidates.csv`.
+- **1.7** - Firewall rules can no longer appear in the settings files. A
+  rule whose detail table is not found now still goes to the firewall
+  files, with its detail columns blank, instead of falling through to the
+  settings. Firewall profile and global settings are not rules and still
+  appear in the settings files.
+- **1.6** - Firewall rules were still missing after 1.5. Rule tables are
+  now recognized by their headers instead of by finding the Inbound Rules
+  heading; direction comes from document order. Rows, cells and detail
+  rows no longer use `nextSibling`, `.rows` or `.cells`. New
+  `FirewallDiagnostics.csv` shows which step fails per report. Earlier
+  fixes (1.4, 1.5) were validated only in Python, which does not reproduce
+  how the Windows `HTMLFile` object behaves; the cause of 1.5 still failing
+  is not confirmed.
+- **1.5** - Real cause of the empty firewall files. Row and cell lookups
+  used `getElementsByTagName`, which searches every depth. A firewall
+  rule's detail row is one cell holding a nested table, so the lookup
+  counted many cells and concluded there was no detail table. Rules then
+  fell through to ordinary settings in `CommonSettings.csv`. New helpers
+  `Get-TableRows` and `Get-RowCells` read only a table's own rows and a
+  row's own cells. On a sample report, detail tables found went from 0 of
+  204 rules to 204 of 204. Also fixes list-style ADMX values (ASR rules,
+  Hardened UNC Paths) and nested-table rows being read as settings. The
+  1.4 note claiming validation was wrong: the Python check only looked at
+  direct children, so it could not reproduce this bug.
+- **1.4** - Firewall rules split into their own comparison, matching the
+  pattern used for regular settings: `FirewallRulesCommon.csv` (a rule -
+  matched by Name + Direction - present in every report with the same
+  configuration) and `FirewallRulesUnique.csv` (present in only some
+  reports, or with a differing configuration in at least one).
+  `FirewallRules.csv` remains the raw per-report inventory. Also fixed the
+  actual reason `FirewallRules.csv` was coming back empty:
+  `GPOCompareHtml.psm1`'s `Get-Attribute` used `getAttributeNode(name)`,
+  which is case-sensitive in the document mode the `HTMLFile` COM object
+  negotiates, while gpresult writes the `colspan` attribute lowercase and
+  the call site queried it as `'colSpan'` - silently returning null
+  instead of throwing, which broke every nested-detail-table lookup
+  (Firewall rule detail, Administrative Template list values). Switched to
+  the case-insensitive `getAttribute`. Validated against all three sample
+  reports: 618 firewall rule rows across the three, all 133 distinct
+  rule identities present and identical in every report (expected, since
+  the three reports are the same computer in different OUs and Windows'
+  predefined firewall rules don't vary by OU).
+- **1.3** - Replaced all 4 uses of the `"{0}={1}" -f` composite-format
+  operator with plain string interpolation, matching the same fix already
+  applied to `GPOCompare.psm1` for the same reported error.
+- **1.2** - Fixed the actual reported source of "The property 'Count'
+  cannot be found on this object": `Get-AllTags` (26 call sites) and
+  `Get-HeadingAncestors` (4 call sites) both return a .NET ArrayList, and
+  PowerShell's pipeline silently unwraps an ArrayList with exactly one
+  item into that bare single element whenever the caller doesn't force
+  array context - so any later `.Count` check on it throws. Confirmed this
+  is common, not an edge case: one sample report alone has 402 rows with
+  exactly one `<td>` and 3 tables with exactly one `<th>`. Every call site
+  is now wrapped in `@(...)`.
+- **1.1** - Guarded three unguarded sibling-walk `.tagName` accesses
+  (`Get-NestedDetailRows`, System Services parsing) behind a new
+  `Get-NodeTagName` helper, matching the one walk that was already
+  guarded - a whitespace text node between tags may not expose `.tagName`
+  the same way an element does. Parser-error Reason text now includes the
+  module line number that threw.
+- **1.0** - Initial version, built for gpresult /h (RSoP) HTML reports.
+  Validated by re-implementing the DOM-walk algorithm in Python against
+  three real reports before shipping, which caught and fixed two
+  significant bugs pre-release: heading divs are the PRECEDING SIBLING of
+  their content div, not an ancestor of it (an ancestor-only walk found
+  nothing); and "Computer Details"/"User Details" were wrongly in the
+  skip-list, which would have skipped nearly the entire report. Group
+  Policy Preferences items are explicitly excluded (routed to
+  Unclassified) rather than parsed, since their per-field layout doesn't
+  fit the generic table handlers.
 
-- Unsupported extensions go to Unclassified (`default` case in `Invoke-GPOSectionParser`). Each extension is parsed in its own try/catch, so one bad section no longer discards the whole GPO.
-- Unsupported Security sub-sections (legacy audit, event log, restricted groups, file/registry permissions, and so on) are reported.
-- Direct property access replaced with `Get-XmlProperty` where a missing element would throw under StrictMode (firewall profiles/rules, LUG container, audit, ADMX policy, NRPT rule).
-- Outbound firewall rules are parsed (`OutboundFirewallRules`); inbound null-element bug fixed.
-- Sorted before joining: user rights members, LUG members, ListBox/MultiText/MultiString/SettingStrings/DisplayStrings values.
-- User rights: falls back to the SID when a member has no name.
-- `Convert-AuditValue` accepts an empty value.
-- Security Options with no name go to Unclassified (no more `<UnknownSecurityOption>` collisions).
-- `Get-CleanText` returns the text of XML nodes instead of the type name.
-- Single Unclassified record schema (`New-UnclassifiedRecord`).
-- XML loaded with `XmlDocument.Load(stream)` (encoding detected, `-LiteralPath` safe) instead of `Get-Content -Encoding Unicode`.
-- Deprecated policy reference is now a table (Name / Category / RegistryPath matching, optional CategoryFilter). Output adds Technology, MatchType, Status, RecommendedReplacement.
-- Removed: duplicate `Convert-AuditValue` and `Add-FirewallRule`, six unused `Invoke-*Parser` wrappers, `Get-AuditCategory`, `Get-NodeValue`, `Get-NodeState`, `Get-PropertyValue`, `New-GPONamespaceManager`, two commented-out functions, unused script variables including `ExcludeFirewallRulesFromComparison`.
+## Shared reference files
 
-## intunemapping.json (schema 1.1)
+- **DeprecatedPoliciesReference.md** - 1.0. Table format
+  (Technology/MatchType/Pattern/Status/Replacement/CategoryFilter), read by
+  both toolsets.
+- **intunemapping.json** - schemaVersion 1.1 (tracked separately, since
+  it's a data schema version rather than a tool version). Includes a
+  `Security | * | *` fallback and treats Registry Settings as applying to
+  any class.
 
-- Added a `Security | * | *` fallback (account policies and other Security settings had no match).
-- Registry Settings now apply to any class (User-scoped registry settings were unmapped).
-- Added `statusDefinitions`. Updated the Membership Actions and firewall notes.
+## Known open items (not yet fixed)
 
-## DeprecatedPoliciesReference.md
-
-- Rewritten as a table the module can read. EMET registry path now works. LAPS name matches for `Name of administrator account to manage` and `Password Settings` require Category `LAPS`.
-
-## Not changed / could not verify
-
-- `$script:ASRRuleMap` is still never filled, so the ASR name translation in Administrative Templates does nothing.
-- Firewall address scopes are still not parsed.
-- `[ref]` parameters and the `<NoValue>` / whitespace normalisation are unchanged.
-- Unverified against your XML: the `OutboundFirewallRules` element name, the `Advanced Audit Configuration` extension name (a mismatch will show up as Unclassified), and the legacy LAPS category `LAPS`.
-- A GPO that has no `Computer`/`User` extension data at all produces no error and no settings.
+- HTML: the `HTMLFile` COM/`IHTMLDocument2_write` interop path is still
+  unverified against a live PowerShell session.
+- HTML: Group Policy Preferences items and File System ACL summary tables
+  are not parsed (routed to Unclassified by design).
+- XML: `$script:ASRRuleMap` is still never populated, so ASR rule name
+  translation in Administrative Templates does nothing.
+- XML: firewall address scopes are still not parsed.

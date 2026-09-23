@@ -65,6 +65,18 @@ FirewallRulesUnique.csv
     reports; ConfigurationDiffers is True when the reports that do have the
     rule disagree on its configuration.
 
+FirewallSettingsCommon.csv
+    Firewall profile settings (Domain / Private / Public), firewall global
+    settings, and Windows Defender Firewall Administrative Template
+    policies present in every report with the same value. These settings
+    are not included in CommonSettings.csv or the other settings
+    comparison files.
+
+FirewallSettingsUnique.csv
+    The same firewall settings, present in only some reports or with a
+    different value in at least one. ValueDiffers is True when the reports
+    that have the setting disagree on its value.
+
 IntuneMigrationCandidates.csv
     Every setting with its Intune mapping from the mapping file, plus a
     Deprecated flag.
@@ -113,7 +125,7 @@ no deprecated matches are reported.
 
 .NOTES
 Author:  Siconic
-Version: 1.6
+Version: 1.8
 
 Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
 schema (something that could break a workflow built on the old output).
@@ -121,6 +133,21 @@ MINOR bumps are bug fixes and additions that don't change existing columns
 or behavior. GPOCompareHtml.psm1 is versioned in lockstep with this script.
 
 Changelog:
+  1.8 - Firewall profile settings (Domain / Private / Public), firewall
+        global settings, and Windows Defender Firewall Administrative
+        Template policies are removed from the settings comparison files
+        (CommonSettings, CommonSettingsByName, UniqueSettings,
+        ConflictingSettings, DuplicateSettings, MissingSettingsMatrix) and
+        compared in two new files: FirewallSettingsCommon.csv and
+        FirewallSettingsUnique.csv. They remain in ParsedSettings.csv and
+        IntuneMigrationCandidates.csv. No module changes; the module
+        version is kept in lockstep.
+  1.7 - GPOCompareHtml.psm1: firewall rules can no longer appear in the
+        settings files (ParsedSettings, CommonSettings and the other
+        comparisons). A rule whose detail table is not found is still
+        written to the firewall files, with its detail columns blank.
+        Firewall profile and global settings (Firewall state, logging and
+        so on) are not rules and still appear in the settings files.
   1.6 - Firewall rules still were not reaching the firewall files in 1.5.
         Rule tables are now recognized by their column headers (Name |
         Description | Winning GPO) rather than by finding the Inbound Rules
@@ -673,6 +700,149 @@ foreach ($IdentityKey in ($FirewallByIdentity.Keys | Sort-Object))
 
 
 # ------------------------------------------------------------
+# Firewall Profile and Global Settings: Common vs Unique
+# ------------------------------------------------------------
+# Firewall profile settings (Domain / Private / Public), global settings,
+# and Windows Defender Firewall Administrative Template policies are taken
+# out of the regular settings comparison and compared on their own, the
+# same way firewall rules are. They stay in ParsedSettings.csv (the full
+# raw list) and in IntuneMigrationCandidates.csv.
+#
+# Common = present in every report with the same value.
+# Unique = present in only some reports, or with a different value in at
+#          least one report (ValueDiffers = True).
+
+function Test-IsFirewallSetting
+{
+    param($Setting)
+
+    $Text = "$($Setting.Extension) / $($Setting.Category)"
+
+    return (
+        $Text -match '(?i)Windows Firewall with Advanced Security' -or
+        $Text -match '(?i)Windows Defender Firewall' -or
+        $Text -match '(?i)(^| / )Windows Firewall( / |$)'
+    )
+}
+
+$FirewallSettingsAll = [System.Collections.ArrayList]::new()
+$CompareSettings     = [System.Collections.ArrayList]::new()
+
+foreach ($Setting in $AllSettings)
+{
+    if (Test-IsFirewallSetting $Setting)
+    {
+        [void]$FirewallSettingsAll.Add($Setting)
+    }
+    else
+    {
+        [void]$CompareSettings.Add($Setting)
+    }
+}
+
+$FirewallSettingsByName = @{}
+
+foreach ($Setting in $FirewallSettingsAll)
+{
+    $NameKey =
+        @(
+            $Setting.Class
+            $Setting.Extension
+            $Setting.Category
+            $Setting.SettingName
+        ) -join $Sep
+
+    if (-not $FirewallSettingsByName.ContainsKey($NameKey))
+    {
+        $FirewallSettingsByName[$NameKey] = [System.Collections.ArrayList]::new()
+    }
+
+    [void]$FirewallSettingsByName[$NameKey].Add($Setting)
+}
+
+$FirewallSettingsCommon = [System.Collections.ArrayList]::new()
+$FirewallSettingsUnique = [System.Collections.ArrayList]::new()
+
+foreach ($NameKey in ($FirewallSettingsByName.Keys | Sort-Object))
+{
+    $Items = $FirewallSettingsByName[$NameKey]
+
+    $ByReport = @{}
+
+    foreach ($Item in $Items)
+    {
+        if (-not $ByReport.ContainsKey($Item.ReportName))
+        {
+            $ByReport[$Item.ReportName] = [System.Collections.Generic.List[string]]::new()
+        }
+
+        $ByReport[$Item.ReportName].Add($Item.Value)
+    }
+
+    $Signatures =
+        @(
+            foreach ($ReportName in $ByReport.Keys)
+            {
+                (@($ByReport[$ReportName] | Sort-Object -Unique)) -join $Sep
+            }
+        )
+
+    $ReportCount    = $ByReport.Count
+    $SignatureCount = @($Signatures | Sort-Object -Unique).Count
+
+    if ($ReportCount -eq $TotalReports -and $SignatureCount -eq 1)
+    {
+        $First = $Items[0]
+
+        [void]$FirewallSettingsCommon.Add(
+            [PSCustomObject]@{
+                Class       = $First.Class
+                Extension   = $First.Extension
+                Category    = $First.Category
+                SettingName = $First.SettingName
+                Value       = $First.Value
+                PresentIn   = (@($Items.ReportName | Sort-Object -Unique) -join "; ")
+            }
+        )
+
+        continue
+    }
+
+    $ValueMap = @{}
+
+    foreach ($Item in $Items)
+    {
+        if (-not $ValueMap.ContainsKey($Item.Value))
+        {
+            $ValueMap[$Item.Value] = @{
+                Item    = $Item
+                Reports = [System.Collections.Generic.HashSet[string]]::new()
+            }
+        }
+
+        [void]$ValueMap[$Item.Value].Reports.Add($Item.ReportName)
+    }
+
+    foreach ($ValueKey in ($ValueMap.Keys | Sort-Object))
+    {
+        $Entry = $ValueMap[$ValueKey]
+
+        [void]$FirewallSettingsUnique.Add(
+            [PSCustomObject]@{
+                Class          = $Entry.Item.Class
+                Extension      = $Entry.Item.Extension
+                Category       = $Entry.Item.Category
+                SettingName    = $Entry.Item.SettingName
+                Value          = $Entry.Item.Value
+                PresentIn      = (@($Entry.Reports | Sort-Object) -join "; ")
+                PresentInCount = $ReportCount
+                ValueDiffers   = ($SignatureCount -gt 1)
+            }
+        )
+    }
+}
+
+# ------------------------------------------------------------
 # Build Comparison Maps
 # ------------------------------------------------------------
 # Note: comparisons intentionally ignore WinningGPO. Two reports can agree
@@ -683,7 +853,8 @@ foreach ($IdentityKey in ($FirewallByIdentity.Keys | Sort-Object))
 $ExactMap = @{}
 $NameMap  = @{}
 
-foreach ($Setting in $AllSettings)
+# Firewall settings are compared separately above.
+foreach ($Setting in $CompareSettings)
 {
     $NameKey =
         @(
@@ -1017,6 +1188,8 @@ $Statistics =
         FirewallRules         = $AllFirewall.Count
         FirewallCommon        = @($FirewallCommon).Count
         FirewallUnique        = @($FirewallUnique).Count
+        FirewallSettingsCommon = @($FirewallSettingsCommon).Count
+        FirewallSettingsUnique = @($FirewallSettingsUnique).Count
         CommonSettings        = @($CommonSettings).Count
         CommonByName          = @($CommonSettingsByName).Count
         UniqueSettings        = @($UniqueSettings).Count
@@ -1042,6 +1215,8 @@ Export-Report $Matrix                "MissingSettingsMatrix.csv"
 Export-Report $MigrationCandidates   "IntuneMigrationCandidates.csv"
 Export-Report $FirewallCommon        "FirewallRulesCommon.csv"
 Export-Report $FirewallUnique        "FirewallRulesUnique.csv"
+Export-Report $FirewallSettingsCommon "FirewallSettingsCommon.csv"
+Export-Report $FirewallSettingsUnique "FirewallSettingsUnique.csv"
 Export-Report $Statistics            "RunStatistics.csv"
 
 # ------------------------------------------------------------
@@ -1060,6 +1235,8 @@ $ExpectedReports = @(
     "FirewallRules.csv"
     "FirewallRulesCommon.csv"
     "FirewallRulesUnique.csv"
+    "FirewallSettingsCommon.csv"
+    "FirewallSettingsUnique.csv"
     "IntuneMigrationCandidates.csv"
     "UnclassifiedSettings.csv"
     "ParserFailures.csv"

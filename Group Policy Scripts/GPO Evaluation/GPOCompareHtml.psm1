@@ -26,9 +26,14 @@
 # COM interop calls in particular should be treated as the highest-risk
 # part of this file until you run it.
 #
-# Version 1.6
+# Version 1.8
 #
 # Changelog:
+#   1.8 - No changes to this module. Version kept in lockstep with
+#         Compare-GPOHtml.ps1 (firewall settings split into their own files).
+#   1.7 - Every row of a firewall rule table now goes to FirewallRules and
+#         never to Settings. Before, a rule whose detail table was not found
+#         fell through and was saved as an ordinary setting.
 #   1.6 - Firewall rule tables recognized by headers (Name | Description |
 #         Winning GPO); direction from the nearest Inbound/Outbound heading
 #         in document order (sourceIndex). Get-TableRows / Get-RowCells now
@@ -1182,24 +1187,24 @@ function Parse-StandardPolicyTable {
             {
                 $Result.Value.Diagnostics.DetailTablesFound++
             }
+
+            # Every row of a firewall rule table is a rule. It always goes to
+            # FirewallRules, never to Settings, even when its detail table
+            # is not found (the detail columns are then left blank).
+            Add-FirewallDetailRule `
+                -Result $Result `
+                -ReportName $ReportName `
+                -Name $SettingName `
+                -Description $ValueText `
+                -WinningGPO $WinningGPO `
+                -Direction $FirewallDirection `
+                -DetailRows $DetailRows
+
+            continue
         }
 
         if ($DetailRows.Count -gt 0)
         {
-            if ($FirewallDetailMode)
-            {
-                Add-FirewallDetailRule `
-                    -Result $Result `
-                    -ReportName $ReportName `
-                    -Name $SettingName `
-                    -Description $ValueText `
-                    -WinningGPO $WinningGPO `
-                    -Direction $FirewallDirection `
-                    -DetailRows $DetailRows
-
-                continue
-            }
-
             $DetailText = ConvertTo-DetailValueString -Rows $DetailRows
 
             if (-not [string]::IsNullOrWhiteSpace($DetailText))
