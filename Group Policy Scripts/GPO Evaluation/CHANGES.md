@@ -15,7 +15,16 @@ validated by re-implementing the same DOM-walk algorithm in Python against
 three real gpresult /h reports - see that toolset's changelog for what that
 did and didn't catch.
 
-## XML toolset (Compare-GPOXml.ps1 + GPOCompare.psm1) - current: 3.2
+## XML toolset (Compare-GPOXml.ps1 + GPOCompare.psm1) - current: 3.3
+
+- **3.3** - New `-FilePrefix` parameter, the same as HTML 1.10. The prefix
+  and a hyphen are added to the start of every output file name
+  (`LS-CommonSettings.csv`). If the parameter is not given, the script asks
+  for it; an empty answer keeps the original file names. No module changes.
+  Run in Windows PowerShell 5.1 with one invalid XML file (no GPO XML
+  exports were available): the four files written before the "No settings
+  were parsed" stop were all prefixed, and the stop message named the
+  prefixed files. A full XML run with the prefix has not been tested.
 
 - **3.2** - Replaced all 13 uses of the `"{0}={1}" -f` composite-format
   operator with plain string interpolation (a grep for ` -f ` with spaces
@@ -39,7 +48,18 @@ did and didn't catch.
   mapping and deprecated-policy matching added; module path, encoding, and
   `-LiteralPath` fixes; duplicate/dead function definitions removed.
 
-## HTML toolset (Compare-GPOHtml.ps1 + GPOCompareHtml.psm1) - current: 1.9
+## HTML toolset (Compare-GPOHtml.ps1 + GPOCompareHtml.psm1) - current: 1.10
+
+- **1.10** - New `-FilePrefix` parameter. The prefix and a hyphen are added
+  to the start of every output file name (`LS-CommonSettings.csv`). A
+  trailing hyphen in the input is removed, so `LS-` also gives `LS-`. If
+  the parameter is not given, the script asks for it; an empty answer
+  keeps the original file names. `-FilePrefix ""` skips the question. In a
+  session that cannot ask, no prefix is used. A prefix with a character
+  not allowed in file names stops the run. No module changes. Run in
+  Windows PowerShell 5.1: all 18 files prefixed with `LS`, `LS-`, and an
+  answer of `LS` given to the question on standard input; no prefix with
+  `""` and in a `-NonInteractive` session; `a:b` stopped the run.
 
 - **1.9** - The report title table (`<table class="title">`) is skipped.
   Its "Data collected on: <date/time>" row was recorded as a setting with

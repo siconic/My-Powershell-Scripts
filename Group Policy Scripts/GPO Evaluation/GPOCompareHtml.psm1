@@ -26,9 +26,11 @@
 # COM interop calls in particular should be treated as the highest-risk
 # part of this file until you run it.
 #
-# Version 1.9
+# Version 1.10
 #
 # Changelog:
+#   1.10 - No changes to this module. Version kept in lockstep with
+#          Compare-GPOHtml.ps1 (output file name prefix added).
 #   1.9 - The report title table (class "title") is skipped. Its
 #         "Data collected on: <date/time>" row was recorded as a setting
 #         (Class Unknown), so every comparison of reports taken at

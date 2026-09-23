@@ -1,7 +1,9 @@
 #==========================================================
-# Version 3.2
+# Version 3.3
 #
 # Changelog:
+#   3.3 - No changes to this module. Version kept in lockstep with
+#         Compare-GPOXml.ps1 (output file name prefix added).
 #   3.2 - Replaced all 13 uses of the "{0}={1}" -f composite-format
 #         operator with plain string interpolation. This was the reported
 #         source of "error formatting a string: index (zero based) must be

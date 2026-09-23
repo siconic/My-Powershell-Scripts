@@ -83,12 +83,23 @@ but cannot be parsed stops the run.
 Path to DeprecatedPoliciesReference.md. Default: next to this script. If it
 does not exist a warning is shown and no deprecated matches are reported.
 
+.PARAMETER FilePrefix
+Text added to the start of every output file name, followed by a hyphen.
+For example, LS writes LS-CommonSettings.csv instead of CommonSettings.csv.
+If this parameter is not given, the script asks for the prefix; press Enter
+for no prefix. Pass -FilePrefix "" to skip the question and use no prefix.
+In a session that cannot ask (for example -NonInteractive), no prefix is
+used.
+
 .EXAMPLE
 .\Compare-GPOXml.ps1 -XmlFolder "C:\GPOProject\XML" -OutputFolder "C:\GPOProject\Output"
 
+.EXAMPLE
+.\Compare-GPOXml.ps1 -XmlFolder "C:\GPOProject\XML" -OutputFolder "C:\GPOProject\Output" -FilePrefix LS
+
 .NOTES
 Author:  Siconic
-Version: 3.2
+Version: 3.3
 
 Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
 schema (something that could break a workflow built on the old output).
@@ -97,6 +108,11 @@ or behavior. GPOCompare.psm1 is versioned in lockstep with this script,
 since the two are always used together.
 
 Changelog:
+  3.3 - New -FilePrefix parameter. The prefix and a hyphen are added to
+        the start of every output file name (LS-CommonSettings.csv). If
+        the parameter is not given, the script asks for it; an empty
+        answer keeps the original file names. No module changes; the
+        module version is kept in lockstep.
   3.2 - GPOCompare.psm1: replaced all 13 uses of the "{0}={1}" -f
         composite-format operator with plain string interpolation, which
         cannot throw the "index (zero based)..." formatting exception that
@@ -136,7 +152,9 @@ param(
 
     [string]$IntuneMappingPath = (Join-Path $PSScriptRoot "intunemapping.json"),
 
-    [string]$DeprecatedReferencePath = (Join-Path $PSScriptRoot "DeprecatedPoliciesReference.md")
+    [string]$DeprecatedReferencePath = (Join-Path $PSScriptRoot "DeprecatedPoliciesReference.md"),
+
+    [string]$FilePrefix
 )
 
 $ErrorActionPreference = "Stop"
@@ -166,6 +184,45 @@ if (-not (Test-Path -LiteralPath $OutputFolder))
 $OutputFolder = (Resolve-Path -LiteralPath $OutputFolder).ProviderPath
 
 # ------------------------------------------------------------
+# Output file name prefix
+# ------------------------------------------------------------
+
+# When -FilePrefix is not given, ask for it. An empty answer means no
+# prefix. In a non-interactive session Read-Host fails, and no prefix is
+# used.
+if (-not $PSBoundParameters.ContainsKey('FilePrefix'))
+{
+    try
+    {
+        $FilePrefix = Read-Host "Output file name prefix (for example LS). Press Enter for no prefix"
+    }
+    catch
+    {
+        $FilePrefix = ""
+    }
+}
+
+$FilePrefix = "$($FilePrefix)".Trim().TrimEnd('-')
+
+if ($FilePrefix.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0)
+{
+    throw "FilePrefix contains a character that is not allowed in a file name: $FilePrefix"
+}
+
+# Added to the start of every output file name, for example "LS-".
+$FileNamePrefix = ""
+
+if ($FilePrefix -ne "")
+{
+    $FileNamePrefix = "$($FilePrefix)-"
+    Write-Host "Output file prefix: $FileNamePrefix"
+}
+else
+{
+    Write-Host "Output file prefix: (none)"
+}
+
+# ------------------------------------------------------------
 # Helper Functions
 # ------------------------------------------------------------
 
@@ -179,7 +236,7 @@ function Export-Report
         [string]$Name
     )
 
-    $Path = Join-Path $OutputFolder $Name
+    $Path = Join-Path $OutputFolder "$($FileNamePrefix)$($Name)"
 
     $Rows = @()
 
@@ -406,7 +463,7 @@ foreach ($XmlFile in $XmlFiles)
 
         if ($Result.Unclassified.Count -gt 0)
         {
-            Write-Warning "$($XmlFile.BaseName): $($Result.Unclassified.Count) unclassified entries (see UnclassifiedSettings.csv)."
+            Write-Warning "$($XmlFile.BaseName): $($Result.Unclassified.Count) unclassified entries (see $($FileNamePrefix)UnclassifiedSettings.csv)."
         }
     }
     catch
@@ -449,7 +506,7 @@ Export-Report $Failures        "ParserFailures.csv"
 
 if ($AllSettings.Count -eq 0)
 {
-    throw "No settings were parsed from any XML file. See ParserFailures.csv and UnclassifiedSettings.csv in $OutputFolder"
+    throw "No settings were parsed from any XML file. See $($FileNamePrefix)ParserFailures.csv and $($FileNamePrefix)UnclassifiedSettings.csv in $OutputFolder"
 }
 
 # ------------------------------------------------------------
@@ -870,15 +927,15 @@ Write-Host "-----------------"
 
 foreach ($Report in $ExpectedReports)
 {
-    $File = Join-Path $OutputFolder $Report
+    $File = Join-Path $OutputFolder "$($FileNamePrefix)$($Report)"
 
     if (Test-Path -LiteralPath $File)
     {
-        Write-Host "[OK] $Report"
+        Write-Host "[OK] $($FileNamePrefix)$($Report)"
     }
     else
     {
-        Write-Warning "$Report missing"
+        Write-Warning "$($FileNamePrefix)$($Report) missing"
     }
 }
 
@@ -894,12 +951,12 @@ Write-Host ""
 
 if ($Failures.Count -gt 0)
 {
-    Write-Warning "$($Failures.Count) XML file(s) failed to parse and are excluded from the comparison (ParserFailures.csv)."
+    Write-Warning "$($Failures.Count) XML file(s) failed to parse and are excluded from the comparison ($($FileNamePrefix)ParserFailures.csv)."
 }
 
 if ($AllUnclassified.Count -gt 0)
 {
-    Write-Warning "$($AllUnclassified.Count) unclassified entries are not part of the comparison (UnclassifiedSettings.csv)."
+    Write-Warning "$($AllUnclassified.Count) unclassified entries are not part of the comparison ($($FileNamePrefix)UnclassifiedSettings.csv)."
 }
 
 Write-Host "Reports written to:"
