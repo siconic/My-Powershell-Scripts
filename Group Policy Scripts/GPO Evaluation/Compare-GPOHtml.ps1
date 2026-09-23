@@ -93,7 +93,30 @@ no deprecated matches are reported.
 
 .NOTES
 Author:  Siconic
-Version: 1.1 (initial - not yet run against a live PowerShell session)
+Version: 1.2
+
+Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
+schema (something that could break a workflow built on the old output).
+MINOR bumps are bug fixes and additions that don't change existing columns
+or behavior. GPOCompareHtml.psm1 is versioned in lockstep with this script.
+
+Changelog:
+  1.2 - GPOCompareHtml.psm1: fixed the actual reported source of "The
+        property 'Count' cannot be found on this object" - Get-AllTags (26
+        call sites) and Get-HeadingAncestors (4 call sites) both return an
+        ArrayList that PowerShell's pipeline silently unwraps to a bare
+        scalar when exactly one item is found, and every call site now
+        forces array context with @(...) so a later .Count check can't
+        break. This is common: single-<td> rows and single-<th> header
+        tables both occur throughout a typical report.
+  1.1 - GPOCompareHtml.psm1: guarded three unguarded sibling-walk .tagName
+        accesses (Get-NestedDetailRows, System Services parsing) behind a
+        new Get-NodeTagName helper, matching the one walk that was already
+        guarded; parser-error Reason text now includes the module line
+        number that threw.
+  1.0 - Initial version. Not yet run against a live PowerShell session at
+        time of writing; validated by re-implementing the same DOM-walk
+        algorithm in Python against three real gpresult /h reports.
 
 Requires Windows PowerShell with the HTMLFile COM object available
 (standard on Windows with the IE engine present). Not tested on PowerShell 7.
