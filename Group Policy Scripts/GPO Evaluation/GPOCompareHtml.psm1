@@ -1,205 +1,100 @@
-<#
-.SYNOPSIS
-Compare gpresult /h (RSoP) HTML reports.
+#==========================================================
+# GPOCompareHtml.psm1
+#
+# Parses gpresult /h (or GPMC "Group Policy Results") RSoP HTML reports
+# into the same normalized shape GPOCompare.psm1 produces for XML:
+#
+#   Settings, FirewallRules, Unclassified
+#
+# IMPORTANT DIFFERENCE FROM THE XML SIDE:
+# An RSoP HTML report is the RESOLVED policy for one computer/user at the
+# time it was captured, with each setting tagged by its Winning GPO. It is
+# not a raw export of everything configured in one GPO. Every setting
+# object produced here includes a WinningGPO field.
+#
+# PARSING APPROACH:
+# PowerShell has no built-in HTML DOM. This module loads the file with the
+# HTMLFile COM object (mshtml, bundled with Windows) to get a real DOM to
+# walk. This is Windows-only and depends on that COM component being
+# registered, which it normally is on any Windows machine with Internet
+# Explorer's engine present (which is still true of current Windows 10/11
+# and Windows Server as of this writing). If Get-GPOSettingsFromHtml fails
+# immediately with a COM error, see the comment above New-HtmlDom.
+#
+# This has not been executed against a live PowerShell session. It was
+# written and structurally checked against real sample reports, but the
+# COM interop calls in particular should be treated as the highest-risk
+# part of this file until you run it.
+#
+# Version 1.2
+#
+# Changelog:
+#   1.2 - Fixed the actual reported source of "The property 'Count' cannot
+#         be found on this object": Get-AllTags (26 call sites) and
+#         Get-HeadingAncestors (4 call sites) both return a .NET
+#         ArrayList, and PowerShell's pipeline silently enumerates/unwraps
+#         an ArrayList with exactly one item into that single bare element
+#         when the caller doesn't force array context - so any later
+#         .Count check on it throws exactly this error. This is common:
+#         one sample report alone has 402 rows with exactly one <td> and 3
+#         tables with exactly one <th>. Every call site is now wrapped in
+#         @(...) to force array context regardless of item count.
+#   1.1 - Guarded three unguarded sibling-walk .tagName accesses behind a
+#         new Get-NodeTagName helper, matching the one walk that was
+#         already guarded; parser-error Reason text now includes the
+#         module line number that threw.
+#   1.0 - Initial version - see Compare-GPOHtml.ps1's changelog for the
+#         paired script-level notes shipped alongside this version.
+#==========================================================
+Set-StrictMode -Version Latest
 
-.DESCRIPTION
-Processes one or more HTML reports produced by "gpresult /h" or the GPMC
-"Group Policy Results" wizard, and generates comparison, deprecated-policy,
-and Intune migration reports.
-
-DIFFERENT FROM Compare-GPOXml.ps1:
-An HTML report is the RESOLVED (RSoP) policy for one computer/user at the
-time it was captured, not the raw contents of one GPO. Each setting is
-tagged with the GPO that actually won it (WinningGPO). Because of this,
-each input HTML file is called a "report" here, not a "GPO" - in practice
-this script is for comparing the same computer/user under different
-conditions (a different OU, before/after a change, different sites), not
-for comparing unlinked GPOs against each other.
-
-Settings are compared case-insensitively. HTML parsing is performed by
-GPOCompareHtml.psm1 using the Windows HTMLFile COM object (mshtml) - see
-the comment at the top of that file if reports fail to load.
-
-Reports written to OutputFolder:
-
-ParsedSettings.csv
-    Every parsed setting, including which GPO won it (WinningGPO).
-
-CommonSettings.csv
-    Exact match: identical Class, Extension, Category, SettingName and
-    Value in every report.
-
-CommonSettingsByName.csv
-    Setting present in every report regardless of value.
-    SameValueEverywhere = False means the values differ between reports.
-
-UniqueSettings.csv
-    Setting present in some reports but not all.
-
-ConflictingSettings.csv
-    Setting present in more than one report with different values.
-
-DuplicateSettings.csv
-    Setting present identically in more than one report.
-
-DeprecatedPolicies.csv
-    Settings that match DeprecatedPoliciesReference.md.
-
-MissingSettingsMatrix.csv
-    Present / Missing per report for every setting name.
-
-FirewallRules.csv
-    Inventory of firewall rules (Inbound and Outbound) with their resolved
-    detail fields (Enabled, Program, Action, Protocol, ports, profile).
-
-IntuneMigrationCandidates.csv
-    Every setting with its Intune mapping from the mapping file, plus a
-    Deprecated flag.
-
-UnclassifiedSettings.csv
-    Table shapes this parser does not recognize, and rows with no setting
-    name. Anything listed here is NOT part of the comparison reports. This
-    is expected to be non-zero more often than the XML tool's equivalent:
-    RSoP HTML has a long tail of report-only formats (Preferences items,
-    certain summary tables) this version does not parse.
-
-ParserFailures.csv
-    HTML files that could not be parsed at all.
-
-RunStatistics.csv
-    Counts for the run.
-
-.PARAMETER HtmlFolder
-Folder containing gpresult /h HTML reports.
-
-.PARAMETER OutputFolder
-Folder where generated reports are written. Created if it does not exist.
-
-.PARAMETER ModulePath
-Path to GPOCompareHtml.psm1. Default: next to this script.
-
-.PARAMETER IntuneMappingPath
-Path to the Intune mapping file (same format/file as Compare-GPOXml.ps1
-uses). Default: intunemapping.json next to this script. Optional: if
-missing, a warning is shown and the run continues.
-
-.PARAMETER DeprecatedReferencePath
-Path to DeprecatedPoliciesReference.md (same file the XML tool uses).
-Default: next to this script. Optional: if missing, a warning is shown and
-no deprecated matches are reported.
-
-.EXAMPLE
-.\Compare-GPOHtml.ps1 -HtmlFolder "C:\GPOProject\HTML" -OutputFolder "C:\GPOProject\Output-Html"
-
-.NOTES
-Author:  Siconic
-Version: 1.2
-
-Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
-schema (something that could break a workflow built on the old output).
-MINOR bumps are bug fixes and additions that don't change existing columns
-or behavior. GPOCompareHtml.psm1 is versioned in lockstep with this script.
-
-Changelog:
-  1.2 - GPOCompareHtml.psm1: fixed the actual reported source of "The
-        property 'Count' cannot be found on this object" - Get-AllTags (26
-        call sites) and Get-HeadingAncestors (4 call sites) both return an
-        ArrayList that PowerShell's pipeline silently unwraps to a bare
-        scalar when exactly one item is found, and every call site now
-        forces array context with @(...) so a later .Count check can't
-        break. This is common: single-<td> rows and single-<th> header
-        tables both occur throughout a typical report.
-  1.1 - GPOCompareHtml.psm1: guarded three unguarded sibling-walk .tagName
-        accesses (Get-NestedDetailRows, System Services parsing) behind a
-        new Get-NodeTagName helper, matching the one walk that was already
-        guarded; parser-error Reason text now includes the module line
-        number that threw.
-  1.0 - Initial version. Not yet run against a live PowerShell session at
-        time of writing; validated by re-implementing the same DOM-walk
-        algorithm in Python against three real gpresult /h reports.
-
-Requires Windows PowerShell with the HTMLFile COM object available
-(standard on Windows with the IE engine present). Not tested on PowerShell 7.
-
-After a run, check Unclassified and ParseFailures in RunStatistics.csv
-before trusting the comparison reports.
-#>
-
-[CmdletBinding()]
-param(
-    [Parameter(Mandatory)]
-    [string]$HtmlFolder,
-
-    [Parameter(Mandatory)]
-    [string]$OutputFolder,
-
-    [string]$ModulePath = (Join-Path $PSScriptRoot "GPOCompareHtml.psm1"),
-
-    [string]$IntuneMappingPath = (Join-Path $PSScriptRoot "intunemapping.json"),
-
-    [string]$DeprecatedReferencePath = (Join-Path $PSScriptRoot "DeprecatedPoliciesReference.md")
+# Section headings that are pure structure/navigation, not settings. Anything
+# under one of these (by exact heading text) is skipped rather than reported
+# as Unclassified, to avoid noise.
+# NOTE: 'Computer Details' / 'User Details' are NOT in this list even
+# though they sound like identity-only sections. In this report format they
+# are the top-level containers that everything else (including all Policies
+# settings) lives inside, so skipping them would skip almost the entire
+# report. The metadata subsections that actually sit alongside "Settings"
+# under each of those (General, Component Status, ...) are what this list
+# is for.
+$script:SkippedSectionTitles = @(
+    'Summary',
+    'General',
+    'Component Status',
+    'Group Policy Objects',
+    'Applied GPOs',
+    'Denied GPOs',
+    'WMI Filters',
+    'Security Group Membership'
 )
 
-$ErrorActionPreference = "Stop"
+# Heading text that is purely structural wrapping (grouping headings, not a
+# real category) and should be dropped when building a breadcrumb. Computer
+# Details / User Details are identity wrappers used for Class detection
+# (Get-ConfigurationClass), not real categories, so they are dropped here too
+# or every Extension in the Computer/User branch would read "Computer
+# Details" / "User Details" instead of the real top category.
+$script:StructuralHeadings = @(
+    'Policies',
+    'Preferences',
+    'Settings',
+    'Windows Settings',
+    'Software Settings',
+    'Computer Details',
+    'User Details'
+)
 
-$Sep = [string][char]0x1F
-
-# ------------------------------------------------------------
-# Validation
-# ------------------------------------------------------------
-
-if (-not (Test-Path -LiteralPath $HtmlFolder -PathType Container))
-{
-    throw "HTML folder not found: $HtmlFolder"
+$script:DeprecatedPolicyReference = @{
+    Entries = @()
 }
 
-if (-not (Test-Path -LiteralPath $ModulePath -PathType Leaf))
-{
-    throw "Module not found: $ModulePath"
-}
+#==========================================================
+# DOM Loading
+#==========================================================
 
-if (-not (Test-Path -LiteralPath $OutputFolder))
-{
-    New-Item -Path $OutputFolder -ItemType Directory -Force | Out-Null
-}
+function New-HtmlDom {
 
-$OutputFolder = (Resolve-Path -LiteralPath $OutputFolder).ProviderPath
-
-# ------------------------------------------------------------
-# Helper Functions
-# ------------------------------------------------------------
-
-function Export-Report
-{
-    param(
-        [AllowNull()]
-        [object]$Data,
-
-        [Parameter(Mandatory)]
-        [string]$Name
-    )
-
-    $Path = Join-Path $OutputFolder $Name
-
-    $Rows = @()
-
-    if ($null -ne $Data)
-    {
-        $Rows = @($Data)
-    }
-
-    if ($Rows.Count -eq 0)
-    {
-        [System.IO.File]::WriteAllText($Path, "")
-        return
-    }
-
-    $Rows |
-    Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8
-}
-
-function Import-IntuneMapping
-{
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
@@ -208,690 +103,1686 @@ function Import-IntuneMapping
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf))
     {
-        Write-Warning "Intune mapping file not found: $Path - continuing without Intune mapping (MappingStatus will be MappingFileMissing)."
-        return $null
+        throw "File not found: $Path"
     }
 
+    # ReadAllText auto-detects the encoding from the byte order mark
+    # (gpresult /h typically writes UTF-16LE, but this does not assume that).
+    $ResolvedPath = (Resolve-Path -LiteralPath $Path).ProviderPath
+    $HtmlText     = [System.IO.File]::ReadAllText($ResolvedPath)
+
+    $Doc = New-Object -ComObject "HTMLFile"
+
+    # The write() signature differs between PowerShell hosts. Try the
+    # Windows PowerShell 5.1 IHTMLDocument2_write path first, then fall
+    # back to the array-of-bytes form used by some older hosts.
     try
     {
-        $Catalog =
-            Get-Content -LiteralPath $Path -Raw -Encoding UTF8 -ErrorAction Stop |
-            ConvertFrom-Json -ErrorAction Stop
+        $Doc.IHTMLDocument2_write($HtmlText)
     }
     catch
     {
-        throw "Failed to load Intune mapping file '$Path': $($_.Exception.Message)"
+        try
+        {
+            $Bytes = [System.Text.Encoding]::Unicode.GetBytes($HtmlText)
+            $Doc.write($Bytes)
+        }
+        catch
+        {
+            throw "Failed to load HTML into the HTMLFile COM object. This usually means mshtml is not available on this machine, or the PowerShell host's COM interop does not expose IHTMLDocument2_write. Original error: $($_.Exception.Message)"
+        }
     }
 
-    if ($null -eq $Catalog -or $null -eq $Catalog.mappings)
-    {
-        throw "Invalid Intune mapping file '$Path': missing 'mappings' array."
-    }
-
-    return $Catalog
+    return $Doc
 }
 
-function Test-IntuneMappingField
-{
+#==========================================================
+# Generic DOM Helpers
+#
+# Deliberately avoid getElementsByClassName / querySelectorAll: those
+# depend on the IE document mode the HTMLFile COM object negotiates, which
+# is not guaranteed here. getElementsByTagName is the one API that has
+# always been present, so class/attribute matching is done by hand.
+#==========================================================
+
+function Test-ElementHasClass {
+
+    [CmdletBinding()]
     param(
-        [AllowNull()]
-        [object]$Expected,
-
-        [AllowNull()]
-        [object]$Actual
+        [object]$Element,
+        [Parameter(Mandatory)]
+        [string]$ClassName
     )
 
-    if (
-        $null -eq $Expected -or
-        [string]::IsNullOrWhiteSpace([string]$Expected) -or
-        [string]$Expected -eq '*'
-    )
+    if ($null -eq $Element)
     {
-        return $true
+        return $false
     }
 
-    return ([string]$Expected -ieq [string]$Actual)
+    $Existing = $null
+
+    try
+    {
+        $Existing = $Element.className
+    }
+    catch
+    {
+        return $false
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Existing))
+    {
+        return $false
+    }
+
+    return (
+        $Existing.Split(
+            [char[]]@(' ', "`t"),
+            [System.StringSplitOptions]::RemoveEmptyEntries
+        ) -contains $ClassName
+    )
 }
 
-$script:IntuneMappingCache = @{}
+function Get-AllTags {
 
-function Get-IntuneMapping
-{
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [object]$Setting,
+        [object]$Root,
 
-        [AllowNull()]
-        [object]$Catalog
+        [Parameter(Mandatory)]
+        [string]$TagName
     )
 
-    if ($null -eq $Catalog)
+    $Collection = $Root.getElementsByTagName($TagName)
+    $Items      = [System.Collections.ArrayList]::new()
+
+    for ($i = 0; $i -lt $Collection.length; $i++)
+    {
+        [void]$Items.Add($Collection.item($i))
+    }
+
+    return $Items
+}
+
+function Get-CleanText {
+
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value)
+    {
+        return ""
+    }
+
+    $Text = ""
+
+    if ($Value -is [string])
+    {
+        $Text = $Value
+    }
+    else
+    {
+        try
+        {
+            $Text = $Value.innerText
+        }
+        catch
+        {
+            $Text = $Value.ToString()
+        }
+    }
+
+    if ($null -eq $Text)
+    {
+        return ""
+    }
+
+    $Text = $Text -replace '\s+', ' '
+
+    $Text.Trim()
+}
+
+function Get-Attribute {
+
+    [CmdletBinding()]
+    param(
+        [object]$Element,
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    if ($null -eq $Element)
     {
         return $null
     }
 
-    $CacheKey =
-        @($Setting.Class, $Setting.Extension, $Setting.Category, $Setting.SettingName) -join $Sep
-
-    if ($script:IntuneMappingCache.ContainsKey($CacheKey))
-    {
-        return $script:IntuneMappingCache[$CacheKey]
-    }
-
-    $Best            = $null
-    $BestSpecificity = -1
-
-    foreach ($Map in @($Catalog.mappings))
-    {
-        if (
-            (Test-IntuneMappingField $Map.class $Setting.Class) -and
-            (Test-IntuneMappingField $Map.extension $Setting.Extension) -and
-            (Test-IntuneMappingField $Map.category $Setting.Category) -and
-            (Test-IntuneMappingField $Map.settingName $Setting.SettingName)
-        )
-        {
-            $Specificity = 0
-
-            foreach ($Field in @('class', 'extension', 'category', 'settingName'))
-            {
-                $FieldValue = [string]$Map.$Field
-
-                if (-not [string]::IsNullOrWhiteSpace($FieldValue) -and $FieldValue -ne '*')
-                {
-                    $Specificity++
-                }
-            }
-
-            if ($Specificity -gt $BestSpecificity)
-            {
-                $Best            = $Map
-                $BestSpecificity = $Specificity
-            }
-        }
-    }
-
-    $script:IntuneMappingCache[$CacheKey] = $Best
-
-    return $Best
-}
-
-# ------------------------------------------------------------
-# Load Module and Reference Data
-# ------------------------------------------------------------
-
-Import-Module -Name $ModulePath -Force
-
-Import-DeprecatedPolicyReference `
-    -Path $DeprecatedReferencePath
-
-$IntuneMappingCatalog =
-    Import-IntuneMapping `
-        -Path $IntuneMappingPath
-
-# ------------------------------------------------------------
-# Storage
-# ------------------------------------------------------------
-
-$AllSettings     = [System.Collections.ArrayList]::new()
-$AllFirewall     = [System.Collections.ArrayList]::new()
-$AllUnclassified = [System.Collections.ArrayList]::new()
-$Failures        = [System.Collections.ArrayList]::new()
-$ParsedReports   = [System.Collections.Generic.List[string]]::new()
-
-# ------------------------------------------------------------
-# Load HTML Files
-# ------------------------------------------------------------
-
-$HtmlFiles =
-    @(
-        Get-ChildItem `
-            -LiteralPath $HtmlFolder `
-            -Include *.html, *.htm `
-            -File `
-            -Recurse:$false
-    )
-
-if ($HtmlFiles.Count -lt 1)
-{
-    throw "No HTML files found in: $HtmlFolder"
-}
-
-Write-Host ""
-Write-Host "HTML Files Found: $($HtmlFiles.Count)"
-Write-Host ""
-
-# ------------------------------------------------------------
-# Parse Files
-# ------------------------------------------------------------
-
-foreach ($HtmlFile in $HtmlFiles)
-{
-    Write-Host ""
-    Write-Host "================================"
-    Write-Host "Processing: $($HtmlFile.Name)"
-    Write-Host "================================"
-    Write-Host ""
-
     try
     {
-        $Result =
-            Get-GPOSettingsFromHtml `
-                -Path $HtmlFile.FullName `
-                -ReportName $HtmlFile.BaseName
+        $Node = $Element.getAttributeNode($Name)
 
-        foreach ($Item in $Result.Settings)
+        if ($null -ne $Node)
         {
-            [void]$AllSettings.Add($Item)
-        }
-
-        foreach ($Item in $Result.FirewallRules)
-        {
-            [void]$AllFirewall.Add($Item)
-        }
-
-        foreach ($Item in $Result.Unclassified)
-        {
-            [void]$AllUnclassified.Add($Item)
-        }
-
-        $ParsedReports.Add($HtmlFile.BaseName)
-
-        Write-Host "Settings      : $($Result.Settings.Count)"
-        Write-Host "FirewallRules : $($Result.FirewallRules.Count)"
-        Write-Host "Unclassified  : $($Result.Unclassified.Count)"
-
-        if ($Result.Unclassified.Count -gt 0)
-        {
-            Write-Warning "$($HtmlFile.BaseName): $($Result.Unclassified.Count) unclassified entries (see UnclassifiedSettings.csv)."
+            return $Node.value
         }
     }
     catch
     {
-        Write-Warning $_.Exception.Message
-
-        [void]$Failures.Add(
-            [PSCustomObject]@{
-                ReportName = $HtmlFile.BaseName
-                Error      = $_.Exception.Message
-            }
-        )
-    }
-}
-
-# ------------------------------------------------------------
-# Export Raw Parser Output
-# ------------------------------------------------------------
-
-$FirewallOutput = @($AllFirewall)
-
-if (
-    $null -ne $IntuneMappingCatalog -and
-    $null -ne $IntuneMappingCatalog.firewallRuleMapping
-)
-{
-    $FirewallIntuneType = $IntuneMappingCatalog.firewallRuleMapping.intuneType
-
-    $FirewallOutput =
-        @(
-            $AllFirewall |
-            Select-Object *, @{ Name = 'IntuneType'; Expression = { $FirewallIntuneType } }
-        )
-}
-
-Export-Report $AllSettings     "ParsedSettings.csv"
-Export-Report $FirewallOutput  "FirewallRules.csv"
-Export-Report $AllUnclassified "UnclassifiedSettings.csv"
-Export-Report $Failures        "ParserFailures.csv"
-
-if ($AllSettings.Count -eq 0)
-{
-    throw "No settings were parsed from any HTML file. See ParserFailures.csv and UnclassifiedSettings.csv in $OutputFolder"
-}
-
-# ------------------------------------------------------------
-# Build Report List
-# ------------------------------------------------------------
-
-$AllReports   = @($ParsedReports | Sort-Object -Unique)
-$TotalReports = $AllReports.Count
-
-$ReportsWithSettings = @($AllSettings.ReportName | Sort-Object -Unique)
-
-foreach ($ReportName in $AllReports)
-{
-    if ($ReportsWithSettings -notcontains $ReportName)
-    {
-        Write-Warning "$ReportName parsed but produced no settings."
-    }
-}
-
-# ------------------------------------------------------------
-# Build Comparison Maps
-# ------------------------------------------------------------
-# Note: comparisons intentionally ignore WinningGPO. Two reports can agree
-# on a setting's effective value while a different GPO won it in each - the
-# comparison surfaces the value difference (or absence of one); WinningGPO
-# is carried on every row of ParsedSettings.csv for follow-up.
-
-$ExactMap = @{}
-$NameMap  = @{}
-
-foreach ($Setting in $AllSettings)
-{
-    $NameKey =
-        @(
-            $Setting.Class
-            $Setting.Extension
-            $Setting.Category
-            $Setting.SettingName
-        ) -join $Sep
-
-    $ExactKey = $NameKey + $Sep + $Setting.Value
-
-    if (-not $ExactMap.ContainsKey($ExactKey))
-    {
-        $ExactMap[$ExactKey] = @{
-            Item    = $Setting
-            Reports = [System.Collections.Generic.HashSet[string]]::new()
-        }
     }
 
-    [void]$ExactMap[$ExactKey].Reports.Add($Setting.ReportName)
-
-    if (-not $NameMap.ContainsKey($NameKey))
-    {
-        $NameMap[$NameKey] = [System.Collections.ArrayList]::new()
-    }
-
-    [void]$NameMap[$NameKey].Add($Setting)
+    return $null
 }
 
-$SortedExactKeys = @($ExactMap.Keys | Sort-Object)
-$SortedNameKeys  = @($NameMap.Keys | Sort-Object)
+function Get-NodeTagName {
 
-$NameInfo = @{}
-
-foreach ($Key in $SortedNameKeys)
-{
-    $ByReport = @{}
-
-    foreach ($Item in $NameMap[$Key])
-    {
-        if (-not $ByReport.ContainsKey($Item.ReportName))
-        {
-            $ByReport[$Item.ReportName] = [System.Collections.Generic.List[string]]::new()
-        }
-
-        $ByReport[$Item.ReportName].Add($Item.Value)
-    }
-
-    $Signatures =
-        @(
-            foreach ($Report in $ByReport.Keys)
-            {
-                (@($ByReport[$Report] | Sort-Object -Unique)) -join $Sep
-            }
-        )
-
-    $NameInfo[$Key] = [PSCustomObject]@{
-        ReportCount    = $ByReport.Count
-        SignatureCount = @($Signatures | Sort-Object -Unique).Count
-    }
-}
-
-# ------------------------------------------------------------
-# Common Exact
-# ------------------------------------------------------------
-
-$CommonSettings =
-    @(
-        foreach ($Key in $SortedExactKeys)
-        {
-            $Entry = $ExactMap[$Key]
-
-            if ($Entry.Reports.Count -eq $TotalReports)
-            {
-                $Entry.Item
-            }
-        }
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [object]$Node
     )
 
-# ------------------------------------------------------------
-# Common By Name
-# ------------------------------------------------------------
+    # A whitespace/text node between tags does not expose .tagName the same
+    # way an element does; guard every access instead of assuming it is
+    # always safe to read.
+    if ($null -eq $Node)
+    {
+        return $null
+    }
 
-$CommonSettingsByName =
-    @(
-        foreach ($Key in $SortedNameKeys)
+    try
+    {
+        return $Node.tagName
+    }
+    catch
+    {
+        return $null
+    }
+}
+
+function Test-IsNestedTable {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Table
+    )
+
+    # A table whose ancestor chain hits another <table> before it hits the
+    # document body is a detail/sub table, not a top-level settings table.
+    $Node = $Table.parentElement
+
+    while ($null -ne $Node)
+    {
+        $TagName = $null
+
+        try
         {
-            $Info = $NameInfo[$Key]
+            $TagName = $Node.tagName
+        }
+        catch
+        {
+        }
 
-            if ($Info.ReportCount -eq $TotalReports)
+        if ($TagName -eq 'TABLE')
+        {
+            return $true
+        }
+
+        if ($TagName -eq 'BODY')
+        {
+            return $false
+        }
+
+        $Node = $Node.parentElement
+    }
+
+    return $false
+}
+
+#==========================================================
+# Heading / Breadcrumb / Class
+#==========================================================
+
+function Get-HeadingAncestors {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Element
+    )
+
+    # IMPORTANT: in this report format, a heading div (class he{N}h, "Local
+    # Policies/Security Options") is NOT an ancestor of its content div; it
+    # is the PRECEDING SIBLING of its content div, under a shared parent:
+    #
+    #   <div class="container">
+    #     <div class="he4h"><span class="sectionTitle">Accounts</span></div>
+    #     <div class="container">           <-- content lives in here
+    #       <div class="he4i"><table>...</table></div>
+    #     </div>
+    #   </div>
+    #
+    # So finding the heading chain for an element means: at each ancestor
+    # level, look at that level's OWN preceding siblings for a heading div,
+    # then move up one level and repeat. A naive ancestor-only walk finds
+    # nothing, because the heading is never actually an ancestor.
+    $Result = [System.Collections.ArrayList]::new()
+    $Node   = $Element.parentElement
+
+    while ($null -ne $Node)
+    {
+        $Sibling = $Node.previousSibling
+
+        while ($null -ne $Sibling)
+        {
+            $SiblingTag = $null
+
+            try
             {
-                $First = $NameMap[$Key][0]
+                $SiblingTag = $Sibling.tagName
+            }
+            catch
+            {
+            }
 
-                [PSCustomObject]@{
-                    Class               = $First.Class
-                    Extension           = $First.Extension
-                    Category            = $First.Category
-                    SettingName         = $First.SettingName
-                    Value               = $First.Value
-                    SameValueEverywhere = ($Info.SignatureCount -eq 1)
+            if ($SiblingTag -eq 'DIV')
+            {
+                $SiblingClass = $null
+
+                try
+                {
+                    $SiblingClass = $Sibling.className
+                }
+                catch
+                {
+                }
+
+                if ($SiblingClass -match '^he\d')
+                {
+                    [void]$Result.Add($Sibling)
+                    break
+                }
+            }
+
+            $Sibling = $Sibling.previousSibling
+        }
+
+        $Node = $Node.parentElement
+    }
+
+    return $Result
+}
+
+function Get-SectionTitleText {
+
+    [CmdletBinding()]
+    param(
+        [object]$HeadingDiv
+    )
+
+    if ($null -eq $HeadingDiv)
+    {
+        return $null
+    }
+
+    $Spans = @(Get-AllTags -Root $HeadingDiv -TagName 'SPAN')
+    foreach ($Span in $Spans)
+    {
+        if (Test-ElementHasClass -Element $Span -ClassName 'sectionTitle')
+        {
+            return Get-CleanText $Span
+        }
+    }
+
+    return $null
+}
+
+function Get-SectionBreadcrumb {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Element
+    )
+
+    $Ancestors = @(Get-HeadingAncestors -Element $Element)
+    $Titles    = [System.Collections.Generic.List[string]]::new()
+
+    # Ancestors come back nearest-first; reverse for top-down order.
+    for ($i = $Ancestors.Count - 1; $i -ge 0; $i--)
+    {
+        $Title = Get-SectionTitleText -HeadingDiv $Ancestors[$i]
+
+        if ([string]::IsNullOrWhiteSpace($Title))
+        {
+            continue
+        }
+
+        if ($script:StructuralHeadings -contains $Title)
+        {
+            continue
+        }
+
+        # Avoid immediate duplicate labels (a heading div and its content
+        # div sometimes both resolve to the same sectionTitle text).
+        if ($Titles.Count -eq 0 -or $Titles[$Titles.Count - 1] -ne $Title)
+        {
+            $Titles.Add($Title)
+        }
+    }
+
+    return $Titles
+}
+
+function Test-IsSkippedSection {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Element
+    )
+
+    $Ancestors = @(Get-HeadingAncestors -Element $Element)
+
+    foreach ($Ancestor in $Ancestors)
+    {
+        $Title = Get-SectionTitleText -HeadingDiv $Ancestor
+
+        if ($script:SkippedSectionTitles -contains $Title)
+        {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-IsInSection {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Element,
+
+        [Parameter(Mandatory)]
+        [string[]]$SectionTitles
+    )
+
+    $Ancestors = @(Get-HeadingAncestors -Element $Element)
+
+    foreach ($Ancestor in $Ancestors)
+    {
+        $Title = Get-SectionTitleText -HeadingDiv $Ancestor
+
+        if ($SectionTitles -contains $Title)
+        {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-ConfigurationClass {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Element
+    )
+
+    $Ancestors = @(Get-HeadingAncestors -Element $Element)
+
+    foreach ($Ancestor in $Ancestors)
+    {
+        $Title = Get-SectionTitleText -HeadingDiv $Ancestor
+
+        if ([string]::IsNullOrWhiteSpace($Title))
+        {
+            continue
+        }
+
+        if ($Title -match '^(Computer|User)\s+(Configuration|Details)$')
+        {
+            return $Matches[1]
+        }
+    }
+
+    return "Unknown"
+}
+
+#==========================================================
+# Output Helpers (shared shape with GPOCompare.psm1)
+#==========================================================
+
+function New-HtmlParseResult {
+
+    [CmdletBinding()]
+    param()
+
+    [PSCustomObject]@{
+        Settings      = New-Object System.Collections.ArrayList
+        FirewallRules = New-Object System.Collections.ArrayList
+        Unclassified  = New-Object System.Collections.ArrayList
+    }
+}
+
+function New-UnclassifiedRecord {
+
+    [CmdletBinding()]
+    param(
+        [string]$ReportName,
+        [string]$Class,
+        [string]$Extension,
+        [string]$Category,
+        [string]$SettingName,
+        [string]$Value,
+
+        [Parameter(Mandatory)]
+        [string]$Reason
+    )
+
+    [PSCustomObject]@{
+        ReportName  = $ReportName
+        Class       = $Class
+        Extension   = $Extension
+        Category    = $Category
+        SettingName = $SettingName
+        Value       = $Value
+        Reason      = $Reason
+    }
+}
+
+function Add-HtmlSetting {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ref]$Result,
+
+        [string]$ReportName,
+        [string]$Class,
+        [string]$Extension,
+        [string]$Category,
+        [string]$SettingName,
+        [string]$Value,
+        [string]$WinningGPO
+    )
+
+    $SettingName = Get-CleanText $SettingName
+    $Value       = Get-CleanText $Value
+    $Category    = Get-CleanText $Category
+    $Extension   = Get-CleanText $Extension
+    $WinningGPO  = Get-CleanText $WinningGPO
+
+    if ([string]::IsNullOrWhiteSpace($SettingName))
+    {
+        [void]$Result.Value.Unclassified.Add(
+            (
+                New-UnclassifiedRecord `
+                    -ReportName $ReportName `
+                    -Class $Class `
+                    -Extension $Extension `
+                    -Category $Category `
+                    -Value $Value `
+                    -Reason "Missing Setting Name"
+            )
+        )
+
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Category))
+    {
+        $Category = "<NoCategory>"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Extension))
+    {
+        $Extension = "<UnknownExtension>"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Value))
+    {
+        $Value = "<NoValue>"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($WinningGPO))
+    {
+        $WinningGPO = "<Unknown>"
+    }
+
+    [void]$Result.Value.Settings.Add(
+        [PSCustomObject]@{
+            ReportName  = $ReportName
+            Class       = $Class
+            Extension   = $Extension
+            Category    = $Category
+            SettingName = $SettingName
+            Value       = $Value
+            WinningGPO  = $WinningGPO
+        }
+    )
+}
+
+#==========================================================
+# Nested Detail Table Extraction
+#
+# Several policies (Hardened UNC Paths, ASR rules, Firewall rules, some
+# Administrative Template sub-options) render as a normal row followed by
+# a second <tr><td colspan="N"> containing a nested table. This walks that
+# nested table (unwrapping subtable_frame, which wraps explanatory text
+# plus the actual list table) and returns its rows as an ordered list of
+# cell-text arrays.
+#==========================================================
+
+function Get-NestedDetailRows {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Row
+    )
+
+    $NextRow = $Row.nextSibling
+
+    while ($null -ne $NextRow -and (Get-NodeTagName $NextRow) -ne 'TR')
+    {
+        $NextRow = $NextRow.nextSibling
+    }
+
+    if ($null -eq $NextRow)
+    {
+        return @()
+    }
+
+    $Cells = @(Get-AllTags -Root $NextRow -TagName 'TD')
+    if ($Cells.Count -ne 1)
+    {
+        return @()
+    }
+
+    $ColSpan = Get-Attribute -Element $Cells[0] -Name 'colSpan'
+
+    if ([string]::IsNullOrWhiteSpace($ColSpan) -or [int]$ColSpan -lt 2)
+    {
+        return @()
+    }
+
+    # Find the first nested table inside this cell. subtable_frame wraps
+    # explanatory prose plus the real subtable/subtable3; getElementsByTagName
+    # on the cell finds tables at any depth, so take the first one, and if
+    # that is itself a frame, look one level further for the real list.
+    $Tables = @(Get-AllTags -Root $Cells[0] -TagName 'TABLE')
+    if ($Tables.Count -eq 0)
+    {
+        return @()
+    }
+
+    $DetailTable = $null
+
+    foreach ($Candidate in $Tables)
+    {
+        if (Test-ElementHasClass -Element $Candidate -ClassName 'subtable_frame')
+        {
+            continue
+        }
+
+        $DetailTable = $Candidate
+        break
+    }
+
+    if ($null -eq $DetailTable)
+    {
+        return @()
+    }
+
+    $Rows = @(Get-AllTags -Root $DetailTable -TagName 'TR')
+    $Out  = [System.Collections.ArrayList]::new()
+
+    foreach ($DetailRow in $Rows)
+    {
+        # Skip header rows (th cells)
+        if (@(Get-AllTags -Root $DetailRow -TagName 'TH').Count -gt 0)
+        {
+            continue
+        }
+
+        $DetailCells = @(Get-AllTags -Root $DetailRow -TagName 'TD')
+        if ($DetailCells.Count -eq 0)
+        {
+            continue
+        }
+
+        $Values = @($DetailCells | ForEach-Object { Get-CleanText $_ })
+
+        [void]$Out.Add($Values)
+    }
+
+    return $Out
+}
+
+function ConvertTo-DetailValueString {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [System.Collections.IEnumerable]$Rows
+    )
+
+    # Generic fold: 2-column rows become "Name=Value"; a 3rd column (usually
+    # a per-item Source GPO that normally matches the parent row's Winning
+    # GPO) is dropped to avoid duplicating that information. Sorted so row
+    # order in the report does not affect comparison.
+    $Entries =
+        @(
+            foreach ($RowValues in $Rows)
+            {
+                if ($RowValues.Count -ge 2 -and -not [string]::IsNullOrWhiteSpace($RowValues[0]))
+                {
+                    "{0}={1}" -f $RowValues[0], $RowValues[1]
+                }
+                elseif ($RowValues.Count -eq 1)
+                {
+                    $RowValues[0]
+                }
+            }
+        )
+
+    (@($Entries) | Sort-Object) -join "; "
+}
+
+#==========================================================
+# Standard "Policy / Setting / Winning GPO"-shaped tables
+#
+# Covers: Account Policies, Local Policies, Advanced Audit Configuration,
+# Administrative Templates (incl. LAPS, ASR rules, Hardened UNC Paths, list
+# settings), unresolved legacy Registry Settings, Certificates, Scripts,
+# and (in Firewall detail mode) Firewall rule summaries.
+#==========================================================
+
+function Get-TableHeaders {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Table
+    )
+
+    $Rows = @(Get-AllTags -Root $Table -TagName 'TR')
+    if ($Rows.Count -eq 0)
+    {
+        return @()
+    }
+
+    $HeaderCells = @(Get-AllTags -Root $Rows[0] -TagName 'TH')
+    return @($HeaderCells | ForEach-Object { Get-CleanText $_ })
+}
+
+$script:ExcludedHeaderSets = @(
+    , @('Name', 'Value', 'Reference GPO(s)')
+)
+
+function Parse-StandardPolicyTable {
+
+    [CmdletBinding()]
+    param(
+        [ref]$Result,
+        [object]$Table,
+        [string]$ReportName,
+        [string[]]$Headers,
+        [switch]$FirewallDetailMode,
+        [string]$FirewallDirection
+    )
+
+    foreach ($ExcludedSet in $script:ExcludedHeaderSets)
+    {
+        if (@(Compare-Object $Headers $ExcludedSet -SyncWindow 0).Count -eq 0)
+        {
+            [void]$Result.Value.Unclassified.Add(
+                (
+                    New-UnclassifiedRecord `
+                        -ReportName $ReportName `
+                        -Category ($Headers -join ' | ') `
+                        -Reason "Non-setting metadata table"
+                )
+            )
+
+            return
+        }
+    }
+
+    $Rows = @(Get-AllTags -Root $Table -TagName 'TR')
+    foreach ($Row in $Rows)
+    {
+        # Skip header rows and nested-detail rows (single colspan cell).
+        if (@(Get-AllTags -Root $Row -TagName 'TH').Count -gt 0)
+        {
+            continue
+        }
+
+        $Cells = @(Get-AllTags -Root $Row -TagName 'TD')
+        if ($Cells.Count -ne $Headers.Count)
+        {
+            continue
+        }
+
+        $ColSpan = Get-Attribute -Element $Cells[0] -Name 'colSpan'
+
+        if (-not [string]::IsNullOrWhiteSpace($ColSpan) -and [int]$ColSpan -ge 2)
+        {
+            continue
+        }
+
+        $WinningGPO  = ""
+        $SettingName = ""
+        $ValueText   = ""
+        $Category    = (Get-SectionBreadcrumb -Element $Table) -join ' / '
+        $Class       = Get-ConfigurationClass -Element $Table
+        $Extension   = ""
+
+        # Administrative Template policies expose their own canonical path
+        # via the explainlink span; prefer that over the heading breadcrumb.
+        $ExplainSpan = $null
+        $Spans       = @(Get-AllTags -Root $Cells[0] -TagName 'SPAN')
+        foreach ($Span in $Spans)
+        {
+            if (Test-ElementHasClass -Element $Span -ClassName 'explainlink')
+            {
+                $ExplainSpan = $Span
+                break
+            }
+        }
+
+        if ($null -ne $ExplainSpan)
+        {
+            $SettingPath = Get-Attribute -Element $ExplainSpan -Name 'gpmc_settingpath'
+            $SettingNm   = Get-Attribute -Element $ExplainSpan -Name 'gpmc_settingname'
+
+            if (-not [string]::IsNullOrWhiteSpace($SettingNm))
+            {
+                $SettingName = $SettingNm
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($SettingPath))
+            {
+                $Parts = @($SettingPath -split '/' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
+                if ($Parts.Count -gt 0 -and $Parts[0] -match '^(Computer|User)\s+Configuration$')
+                {
+                    $Class = $Matches[1]
+                    $Parts = $Parts[1..($Parts.Count - 1)]
+                }
+
+                if ($Parts.Count -gt 0)
+                {
+                    $Extension = $Parts[0]
+                }
+
+                if ($Parts.Count -gt 1)
+                {
+                    $Category = ($Parts[1..($Parts.Count - 1)]) -join ' / '
+                }
+                else
+                {
+                    $Category = $Extension
                 }
             }
         }
+
+        if ([string]::IsNullOrWhiteSpace($SettingName))
+        {
+            $SettingName = Get-CleanText $Cells[0]
+        }
+
+        if ([string]::IsNullOrWhiteSpace($Extension))
+        {
+            $Breadcrumb = @(Get-SectionBreadcrumb -Element $Table)
+
+            if ($Breadcrumb.Count -gt 0)
+            {
+                $Extension = $Breadcrumb[0]
+            }
+
+            if ($Breadcrumb.Count -gt 1)
+            {
+                $Category = ($Breadcrumb[1..($Breadcrumb.Count - 1)]) -join ' / '
+            }
+            else
+            {
+                $Category = $Extension
+            }
+        }
+
+        # Column layout:
+        #   3 columns: [Name] [Value] [WinningGPO]
+        #   N columns (N>3): [Name] [middle columns folded] [WinningGPO]
+        $LastIndex = $Cells.Count - 1
+        $WinningGPO = Get-CleanText $Cells[$LastIndex]
+
+        if ($Cells.Count -eq 3)
+        {
+            $ValueText = Get-CleanText $Cells[1]
+        }
+        elseif ($Cells.Count -gt 3)
+        {
+            $Middle =
+                @(
+                    for ($i = 1; $i -lt $LastIndex; $i++)
+                    {
+                        $CellText = Get-CleanText $Cells[$i]
+
+                        if (-not [string]::IsNullOrWhiteSpace($CellText))
+                        {
+                            "{0}={1}" -f $Headers[$i], $CellText
+                        }
+                    }
+                )
+
+            $ValueText = $Middle -join "; "
+        }
+        else
+        {
+            $ValueText = ""
+        }
+
+        # Fold in a nested detail table, if this row has one (list-style
+        # Administrative Template values, or Firewall rule detail).
+        $DetailRows = @(Get-NestedDetailRows -Row $Row)
+
+        if ($DetailRows.Count -gt 0)
+        {
+            if ($FirewallDetailMode)
+            {
+                Add-FirewallDetailRule `
+                    -Result $Result `
+                    -ReportName $ReportName `
+                    -Name $SettingName `
+                    -Description $ValueText `
+                    -WinningGPO $WinningGPO `
+                    -Direction $FirewallDirection `
+                    -DetailRows $DetailRows
+
+                continue
+            }
+
+            $DetailText = ConvertTo-DetailValueString -Rows $DetailRows
+
+            if (-not [string]::IsNullOrWhiteSpace($DetailText))
+            {
+                if ([string]::IsNullOrWhiteSpace($ValueText) -or $ValueText -eq '<NoValue>')
+                {
+                    $ValueText = $DetailText
+                }
+                else
+                {
+                    $ValueText = "{0}; {1}" -f $ValueText, $DetailText
+                }
+            }
+        }
+
+        Add-HtmlSetting `
+            -Result $Result `
+            -ReportName $ReportName `
+            -Class $Class `
+            -Extension $Extension `
+            -Category $Category `
+            -SettingName $SettingName `
+            -Value $ValueText `
+            -WinningGPO $WinningGPO
+    }
+}
+
+#==========================================================
+# Key/Value (headerless 2-column) tables
+#
+# Covers most Wireless profile detail ("Authentication", "Encryption", ...),
+# and small identity tables ("Profile Name", "Network Type", ...).
+#==========================================================
+
+function Parse-KeyValueTable {
+
+    [CmdletBinding()]
+    param(
+        [ref]$Result,
+        [object]$Table,
+        [string]$ReportName
     )
 
-# ------------------------------------------------------------
-# Unique
-# ------------------------------------------------------------
+    $Breadcrumb = @(Get-SectionBreadcrumb -Element $Table)
+    $Class      = Get-ConfigurationClass -Element $Table
+    $Extension  = if ($Breadcrumb.Count -gt 0) { $Breadcrumb[0] } else { "" }
+    $Category   = if ($Breadcrumb.Count -gt 1) { ($Breadcrumb[1..($Breadcrumb.Count - 1)]) -join ' / ' } else { $Extension }
 
-$UniqueSettings =
-    @(
-        foreach ($Key in $SortedNameKeys)
+    $Rows = @(Get-AllTags -Root $Table -TagName 'TR')
+    foreach ($Row in $Rows)
+    {
+        $Cells = @(Get-AllTags -Root $Row -TagName 'TD')
+        if ($Cells.Count -ne 2)
         {
-            $Info = $NameInfo[$Key]
+            continue
+        }
 
-            if ($Info.ReportCount -ge $TotalReports)
+        $Name  = Get-CleanText $Cells[0]
+        $Value = Get-CleanText $Cells[1]
+
+        if ([string]::IsNullOrWhiteSpace($Name) -and [string]::IsNullOrWhiteSpace($Value))
+        {
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($Name))
+        {
+            continue
+        }
+
+        Add-HtmlSetting `
+            -Result $Result `
+            -ReportName $ReportName `
+            -Class $Class `
+            -Extension $Extension `
+            -Category $Category `
+            -SettingName $Name `
+            -Value $Value `
+            -WinningGPO ""
+    }
+}
+
+function Parse-LabeledTable {
+
+    [CmdletBinding()]
+    param(
+        [ref]$Result,
+        [object]$Table,
+        [string]$ReportName,
+        [string[]]$Headers
+    )
+
+    # A 2-column table WITH a header row but no "Winning GPO" column
+    # (e.g. "Network Name (SSID) | Network Broadcasts its SSID"). Each
+    # header becomes its own setting per data row.
+    $Breadcrumb = @(Get-SectionBreadcrumb -Element $Table)
+    $Class      = Get-ConfigurationClass -Element $Table
+    $Extension  = if ($Breadcrumb.Count -gt 0) { $Breadcrumb[0] } else { "" }
+    $Category   = if ($Breadcrumb.Count -gt 1) { ($Breadcrumb[1..($Breadcrumb.Count - 1)]) -join ' / ' } else { $Extension }
+
+    $Rows = @(Get-AllTags -Root $Table -TagName 'TR')
+    foreach ($Row in $Rows)
+    {
+        if (@(Get-AllTags -Root $Row -TagName 'TH').Count -gt 0)
+        {
+            continue
+        }
+
+        $Cells = @(Get-AllTags -Root $Row -TagName 'TD')
+        if ($Cells.Count -ne $Headers.Count)
+        {
+            continue
+        }
+
+        for ($i = 0; $i -lt $Cells.Count; $i++)
+        {
+            $CellText = Get-CleanText $Cells[$i]
+
+            if ([string]::IsNullOrWhiteSpace($Headers[$i]))
             {
                 continue
             }
 
-            $ConfigMap = @{}
+            Add-HtmlSetting `
+                -Result $Result `
+                -ReportName $ReportName `
+                -Class $Class `
+                -Extension $Extension `
+                -Category $Category `
+                -SettingName $Headers[$i] `
+                -Value $CellText `
+                -WinningGPO ""
+        }
+    }
+}
 
-            foreach ($Item in $NameMap[$Key])
+#==========================================================
+# Firewall Rules
+#==========================================================
+
+function Add-FirewallDetailRule {
+
+    [CmdletBinding()]
+    param(
+        [ref]$Result,
+        [string]$ReportName,
+        [string]$Name,
+        [string]$Description,
+        [string]$WinningGPO,
+        [string]$Direction,
+        [System.Collections.IEnumerable]$DetailRows
+    )
+
+    $Fields = @{}
+
+    foreach ($RowValues in $DetailRows)
+    {
+        if ($RowValues.Count -ge 2)
+        {
+            $Fields[$RowValues[0]] = $RowValues[1]
+        }
+    }
+
+    [void]$Result.Value.FirewallRules.Add(
+        [PSCustomObject]@{
+            ReportName   = $ReportName
+            Name         = $Name
+            Direction    = $Direction
+            Description  = $Description
+            WinningGPO   = $WinningGPO
+            Enabled      = $Fields['Enabled']
+            Profile      = $Fields['Profile']
+            Action       = $Fields['Action']
+            Program      = $Fields['Program']
+            Protocol     = $Fields['Protocol']
+            LocalPort    = $Fields['Local port']
+            RemotePort   = $Fields['Remote port']
+            LocalScope   = $Fields['Local scope']
+            RemoteScope  = $Fields['Remote scope']
+            Security     = $Fields['Security']
+            Service      = $Fields['Service']
+            Group        = $Fields['Group']
+        }
+    )
+}
+
+#==========================================================
+# System Services (dedicated walk - not table-driven)
+#==========================================================
+
+function Parse-SystemServicesSection {
+
+    [CmdletBinding()]
+    param(
+        [ref]$Result,
+        [object]$Document,
+        [string]$ReportName
+    )
+
+    $Spans = @(Get-AllTags -Root $Document -TagName 'SPAN')
+    foreach ($Span in $Spans)
+    {
+        if (-not (Test-ElementHasClass -Element $Span -ClassName 'sectionTitle'))
+        {
+            continue
+        }
+
+        if ((Get-CleanText $Span) -ne 'System Services')
+        {
+            continue
+        }
+
+        $Heading = $Span.parentElement
+        $Content = $Heading.nextSibling
+
+        while ($null -ne $Content -and (Get-NodeTagName $Content) -ne 'DIV')
+        {
+            $Content = $Content.nextSibling
+        }
+
+        if ($null -eq $Content)
+        {
+            continue
+        }
+
+        $Class = Get-ConfigurationClass -Element $Heading
+
+        $ChildDivs = @(Get-AllTags -Root $Content -TagName 'DIV')
+        # he4h divs (direct children only) are the per-service headings.
+        foreach ($ChildDiv in $ChildDivs)
+        {
+            if ($ChildDiv.parentElement -ne $Content)
             {
-                $ConfigKey = $Item.Value
+                continue
+            }
 
-                if (-not $ConfigMap.ContainsKey($ConfigKey))
+            if (-not (Test-ElementHasClass -Element $ChildDiv -ClassName 'he4h'))
+            {
+                continue
+            }
+
+            $ServiceTitleSpan = $null
+            $TitleSpans = @(Get-AllTags -Root $ChildDiv -TagName 'SPAN')
+            foreach ($TitleSpan in $TitleSpans)
+            {
+                if (Test-ElementHasClass -Element $TitleSpan -ClassName 'sectionTitle')
                 {
-                    $ConfigMap[$ConfigKey] = @{
-                        Item    = $Item
-                        Reports = [System.Collections.Generic.HashSet[string]]::new()
+                    $ServiceTitleSpan = $TitleSpan
+                    break
+                }
+            }
+
+            if ($null -eq $ServiceTitleSpan)
+            {
+                continue
+            }
+
+            $ServiceHeading = Get-CleanText $ServiceTitleSpan
+            $ServiceName    = $ServiceHeading
+            $StartupMode    = ""
+
+            if ($ServiceHeading -match '^(.*?)\s*\(Startup Mode:\s*(.*?)\)\s*$')
+            {
+                $ServiceName = $Matches[1].Trim()
+                $StartupMode = $Matches[2].Trim()
+            }
+
+            $ServiceContent = $ChildDiv.nextSibling
+
+            while ($null -ne $ServiceContent -and (Get-NodeTagName $ServiceContent) -ne 'DIV')
+            {
+                $ServiceContent = $ServiceContent.nextSibling
+            }
+
+            if ($null -eq $ServiceContent)
+            {
+                continue
+            }
+
+            $WinningGPO = ""
+            $InfoTables = @(Get-AllTags -Root $ServiceContent -TagName 'TABLE')
+            foreach ($InfoTable in $InfoTables)
+            {
+                if (Test-IsNestedTable -Table $InfoTable)
+                {
+                    continue
+                }
+
+                if (Test-ElementHasClass -Element $InfoTable -ClassName 'info')
+                {
+                    $Rows = @(Get-AllTags -Root $InfoTable -TagName 'TR')
+                    foreach ($Row in $Rows)
+                    {
+                        $Cells = @(Get-AllTags -Root $Row -TagName 'TD')
+                        if ($Cells.Count -eq 2 -and (Get-CleanText $Cells[0]) -eq 'Winning GPO')
+                        {
+                            $WinningGPO = Get-CleanText $Cells[1]
+                        }
+                    }
+                }
+            }
+
+            Add-HtmlSetting `
+                -Result $Result `
+                -ReportName $ReportName `
+                -Class $Class `
+                -Extension "System Services" `
+                -Category $ServiceName `
+                -SettingName "$ServiceName - Startup Mode" `
+                -Value $StartupMode `
+                -WinningGPO $WinningGPO
+
+            # Permissions / Auditing blocks: each is a <b>Label</b> followed
+            # either by free text ("No permissions specified") or a
+            # subtable3 (Type/Name/Permission or Type/Name/Access).
+            $Labels = @(Get-AllTags -Root $ServiceContent -TagName 'B')
+            foreach ($LabelBold in $Labels)
+            {
+                $Label = Get-CleanText $LabelBold
+
+                if ($Label -notin @('Permissions', 'Auditing'))
+                {
+                    continue
+                }
+
+                $Container = $LabelBold.parentElement
+                $DetailTable = $null
+                $Siblings = @(Get-AllTags -Root $Container -TagName 'TABLE')
+                foreach ($Candidate in $Siblings)
+                {
+                    if (Test-ElementHasClass -Element $Candidate -ClassName 'subtable3')
+                    {
+                        $DetailTable = $Candidate
+                        break
                     }
                 }
 
-                [void]$ConfigMap[$ConfigKey].Reports.Add($Item.ReportName)
-            }
+                if ($null -eq $DetailTable)
+                {
+                    $FreeText = Get-CleanText $Container
+                    $FreeText = $FreeText -replace [regex]::Escape($Label), ''
+                    $FreeText = $FreeText.Trim()
 
-            foreach ($ConfigKey in @($ConfigMap.Keys | Sort-Object))
-            {
-                $Entry = $ConfigMap[$ConfigKey]
+                    Add-HtmlSetting `
+                        -Result $Result `
+                        -ReportName $ReportName `
+                        -Class $Class `
+                        -Extension "System Services" `
+                        -Category $ServiceName `
+                        -SettingName "$ServiceName - $Label" `
+                        -Value $FreeText `
+                        -WinningGPO $WinningGPO
 
-                [PSCustomObject]@{
-                    Class          = $Entry.Item.Class
-                    Extension      = $Entry.Item.Extension
-                    Category       = $Entry.Item.Category
-                    SettingName    = $Entry.Item.SettingName
-                    Value          = $Entry.Item.Value
-                    PresentIn      = (@($Entry.Reports | Sort-Object) -join "; ")
-                    PresentInCount = $Info.ReportCount
-                    ValuesDiffer   = ($Info.SignatureCount -gt 1)
+                    continue
                 }
-            }
-        }
-    )
 
-# ------------------------------------------------------------
-# Conflicts
-# ------------------------------------------------------------
+                $DetailRows = @(Get-AllTags -Root $DetailTable -TagName 'TR')
+                $Entries    = [System.Collections.ArrayList]::new()
 
-$ConflictingSettings =
-    @(
-        foreach ($Key in $SortedNameKeys)
-        {
-            $Info = $NameInfo[$Key]
+                foreach ($DetailRow in $DetailRows)
+                {
+                    if (@(Get-AllTags -Root $DetailRow -TagName 'TH').Count -gt 0)
+                    {
+                        continue
+                    }
 
-            if ($Info.ReportCount -gt 1 -and $Info.SignatureCount -gt 1)
-            {
-                $NameMap[$Key] | Sort-Object ReportName
-            }
-        }
-    )
+                    $DetailCells = @(Get-AllTags -Root $DetailRow -TagName 'TD')
+                    if ($DetailCells.Count -lt 3)
+                    {
+                        continue
+                    }
 
-# ------------------------------------------------------------
-# Duplicates
-# ------------------------------------------------------------
-
-$DuplicateSettings =
-    @(
-        foreach ($Key in $SortedNameKeys)
-        {
-            $Info = $NameInfo[$Key]
-
-            if ($Info.ReportCount -gt 1 -and $Info.SignatureCount -eq 1)
-            {
-                $First   = $NameMap[$Key][0]
-                $Reports = @($NameMap[$Key].ReportName | Sort-Object -Unique)
-
-                [PSCustomObject]@{
-                    Class       = $First.Class
-                    Extension   = $First.Extension
-                    Category    = $First.Category
-                    SettingName = $First.SettingName
-                    Value       = $First.Value
-                    PresentIn   = ($Reports -join "; ")
+                    [void]$Entries.Add(
+                        "{0}: {1} - {2}" -f
+                        (Get-CleanText $DetailCells[1]),
+                        (Get-CleanText $DetailCells[0]),
+                        (Get-CleanText $DetailCells[2])
+                    )
                 }
+
+                $Value = (@($Entries) | Sort-Object) -join "; "
+
+                Add-HtmlSetting `
+                    -Result $Result `
+                    -ReportName $ReportName `
+                    -Class $Class `
+                    -Extension "System Services" `
+                    -Category $ServiceName `
+                    -SettingName "$ServiceName - $Label" `
+                    -Value $Value `
+                    -WinningGPO $WinningGPO
             }
         }
-    )
-
-# ------------------------------------------------------------
-# Deprecated Policy Detection
-# ------------------------------------------------------------
-
-$DeprecatedSettings =
-    @(
-        Get-DeprecatedPolicyMatches `
-            -Settings $AllSettings
-    )
-
-$DeprecatedLookup = @{}
-
-foreach ($Deprecated in $DeprecatedSettings)
-{
-    $DeprecatedKey =
-        @(
-            $Deprecated.ReportName
-            $Deprecated.Class
-            $Deprecated.Extension
-            $Deprecated.Category
-            $Deprecated.SettingName
-            $Deprecated.Value
-        ) -join $Sep
-
-    $DeprecatedLookup[$DeprecatedKey] = $Deprecated
+    }
 }
 
-# ------------------------------------------------------------
-# Missing Matrix
-# ------------------------------------------------------------
+#==========================================================
+# Deprecated Policy Reference (shared file format with GPOCompare.psm1)
+#==========================================================
 
-$Matrix = [System.Collections.Generic.List[object]]::new()
+function Import-DeprecatedPolicyReference {
 
-foreach ($Key in $SortedNameKeys)
-{
-    $Items = $NameMap[$Key]
-    $First = $Items[0]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
 
-    $Row = [ordered]@{}
-
-    $Row["Setting"] =
-        @($First.Class, $First.Extension, $First.Category, $First.SettingName) -join " | "
-
-    foreach ($ReportName in $AllReports)
-    {
-        $Row[$ReportName] = "Missing"
+    $script:DeprecatedPolicyReference = @{
+        Entries = @()
     }
 
-    foreach ($Item in $Items)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf))
     {
-        $Row[$Item.ReportName] = "Present"
+        Write-Warning "Deprecated policy reference file not found: $Path"
+        return
     }
 
-    $Matrix.Add([PSCustomObject]$Row)
+    $ValidMatchTypes = @('Name', 'Category', 'RegistryPath')
+    $Entries = [System.Collections.ArrayList]::new()
+
+    foreach ($Line in (Get-Content -LiteralPath $Path -Encoding UTF8))
+    {
+        $CurrentLine = $Line.Trim()
+
+        if (-not $CurrentLine.StartsWith('|'))
+        {
+            continue
+        }
+
+        $Cells = @(
+            $CurrentLine.Trim('|').Split('|') |
+            ForEach-Object { $_.Trim() }
+        )
+
+        if ($Cells.Count -lt 5)
+        {
+            continue
+        }
+
+        if ($Cells[0] -eq 'Technology')
+        {
+            continue
+        }
+
+        if ($Cells[0] -match '^:?-{3,}:?$')
+        {
+            continue
+        }
+
+        $MatchType = $Cells[1]
+        $Pattern   = $Cells[2]
+
+        if ($ValidMatchTypes -notcontains $MatchType)
+        {
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($Pattern))
+        {
+            continue
+        }
+
+        $CategoryFilter = ''
+
+        if ($Cells.Count -ge 6)
+        {
+            $CategoryFilter = $Cells[5]
+        }
+
+        if ($MatchType -eq 'RegistryPath')
+        {
+            $Pattern = $Pattern -replace '^(HKLM|HKCU|HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER)\\', ''
+        }
+
+        [void]$Entries.Add(
+            [PSCustomObject]@{
+                Technology     = $Cells[0]
+                MatchType      = $MatchType
+                Pattern        = $Pattern
+                Status         = $Cells[3]
+                Replacement    = $Cells[4]
+                CategoryFilter = $CategoryFilter
+            }
+        )
+    }
+
+    $script:DeprecatedPolicyReference = @{
+        Entries = @($Entries)
+    }
 }
 
-# ------------------------------------------------------------
-# Migration Candidates + Intune Mapping
-# ------------------------------------------------------------
+function Get-DeprecatedPolicyMatches {
 
-$MigrationCandidates =
-    foreach ($Setting in $AllSettings)
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [System.Collections.IEnumerable]$Settings
+    )
+
+    $Entries = @($script:DeprecatedPolicyReference.Entries)
+
+    if ($Entries.Count -eq 0)
     {
-        $Map = Get-IntuneMapping -Setting $Setting -Catalog $IntuneMappingCatalog
+        return
+    }
 
-        $DeprecatedKey =
-            @(
-                $Setting.ReportName
-                $Setting.Class
-                $Setting.Extension
-                $Setting.Category
-                $Setting.SettingName
-                $Setting.Value
-            ) -join $Sep
+    $Ignore = [System.StringComparison]::OrdinalIgnoreCase
 
-        $DeprecatedMatch = $DeprecatedLookup[$DeprecatedKey]
+    foreach ($Setting in $Settings)
+    {
+        $SettingName = [string]$Setting.SettingName
+        $Category    = [string]$Setting.Category
 
-        if ($null -eq $IntuneMappingCatalog)
+        foreach ($Entry in $Entries)
         {
-            $MappingStatus = 'MappingFileMissing'
-            $Confidence    = 'None'
-            $MappingNotes  = 'Intune mapping file was not loaded.'
+            $IsMatch = $false
+
+            switch ($Entry.MatchType)
+            {
+                'Name' {
+                    if ([string]::Equals($SettingName, $Entry.Pattern, $Ignore))
+                    {
+                        $IsMatch = $true
+
+                        if (
+                            -not [string]::IsNullOrWhiteSpace($Entry.CategoryFilter) -and
+                            -not [string]::Equals($Category, $Entry.CategoryFilter, $Ignore)
+                        )
+                        {
+                            $IsMatch = $false
+                        }
+                    }
+                }
+
+                'Category' {
+                    if ($Category.IndexOf($Entry.Pattern, $Ignore) -ge 0)
+                    {
+                        $IsMatch = $true
+                    }
+                }
+
+                'RegistryPath' {
+                    if (
+                        $Setting.Extension -eq 'Registry Settings' -and
+                        $Category.IndexOf($Entry.Pattern, $Ignore) -ge 0
+                    )
+                    {
+                        $IsMatch = $true
+                    }
+                }
+            }
+
+            if ($IsMatch)
+            {
+                [PSCustomObject]@{
+                    ReportName             = $Setting.ReportName
+                    Class                  = $Setting.Class
+                    Extension              = $Setting.Extension
+                    Category               = $Setting.Category
+                    SettingName            = $Setting.SettingName
+                    Value                  = $Setting.Value
+                    Technology             = $Entry.Technology
+                    MatchType              = $Entry.MatchType
+                    Status                 = $Entry.Status
+                    RecommendedReplacement = $Entry.Replacement
+                    Reason                 = "Deprecated: $($Entry.Technology)"
+                }
+
+                break
+            }
         }
-        elseif ($null -ne $Map)
+    }
+}
+
+#==========================================================
+# Entry Point
+#==========================================================
+
+function Get-GPOSettingsFromHtml {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+
+        [Parameter(Mandatory)]
+        [string]$ReportName
+    )
+
+    $Result = New-HtmlParseResult
+    $Doc    = $null
+
+    try
+    {
+        $Doc = New-HtmlDom -Path $Path
+    }
+    catch
+    {
+        throw "Failed to load HTML: $($_.Exception.Message)"
+    }
+
+    try
+    {
+        # 1. System Services: dedicated walk, not table-driven.
+        try
         {
-            $MappingStatus = $Map.mappingStatus
-            $Confidence    = $Map.confidence
-            $MappingNotes  = $Map.notes
+            Parse-SystemServicesSection `
+                -Result ([ref]$Result) `
+                -Document $Doc `
+                -ReportName $ReportName
         }
-        else
+        catch
         {
-            $MappingStatus = 'Unmapped'
-            $Confidence    = 'None'
-            $MappingNotes  = 'No matching entry in the Intune mapping file.'
+            [void]$Result.Unclassified.Add(
+                (
+                    New-UnclassifiedRecord `
+                        -ReportName $ReportName `
+                        -Extension "System Services" `
+                        -Reason "Parser error (module line $($_.InvocationInfo.ScriptLineNumber)): $($_.Exception.Message)"
+                )
+            )
         }
 
-        [PSCustomObject]@{
-            ReportName             = $Setting.ReportName
-            Class                  = $Setting.Class
-            Extension              = $Setting.Extension
-            Category               = $Setting.Category
-            SettingName            = $Setting.SettingName
-            Value                  = $Setting.Value
-            WinningGPO             = $Setting.WinningGPO
-            Deprecated             = if ($null -ne $DeprecatedMatch) { 'Yes' } else { 'No' }
-            RecommendedReplacement = if ($null -ne $DeprecatedMatch) { $DeprecatedMatch.RecommendedReplacement } else { $null }
-            IntuneType             = if ($null -ne $Map) { $Map.intuneType } else { $null }
-            IntuneSetting          = if ($null -ne $Map) { $Map.intuneSetting } else { $null }
-            OMAURI                 = if ($null -ne $Map) { $Map.omaUri } else { $null }
-            MappingStatus          = $MappingStatus
-            Confidence             = $Confidence
-            Notes                  = $MappingNotes
+        # 2. All other sections: table-driven, dispatched by header shape.
+        $AllTables = @(Get-AllTags -Root $Doc -TagName 'TABLE')
+        foreach ($Table in $AllTables)
+        {
+            try
+            {
+                if (Test-IsNestedTable -Table $Table)
+                {
+                    continue
+                }
+
+                if (Test-IsSkippedSection -Element $Table)
+                {
+                    continue
+                }
+
+                if (Test-IsInSection -Element $Table -SectionTitles @('System Services'))
+                {
+                    continue
+                }
+
+                # Group Policy Preferences items (Registry, Files, Local Users
+                # and Groups, Drive Maps, etc.) use a per-field property-sheet
+                # layout that the generic table handlers below would fragment
+                # into disconnected rows (e.g. a lone "Winning GPO" row with no
+                # link back to which registry value it belongs to). Not parsed
+                # in this version; preserved as Unclassified instead of being
+                # silently mangled.
+                if (Test-IsInSection -Element $Table -SectionTitles @('Preferences'))
+                {
+                    [void]$Result.Unclassified.Add(
+                        (
+                            New-UnclassifiedRecord `
+                                -ReportName $ReportName `
+                                -Category ((Get-SectionBreadcrumb -Element $Table) -join ' / ') `
+                                -Reason "Group Policy Preferences item (not parsed in this version)"
+                        )
+                    )
+
+                    continue
+                }
+
+                $Headers = @(Get-TableHeaders -Table $Table)
+
+                $IsFirewallRuleTable =
+                    (Test-IsInSection -Element $Table -SectionTitles @('Inbound Rules', 'Outbound Rules')) -and
+                    ($Headers.Count -eq 3) -and
+                    ($Headers[$Headers.Count - 1] -match '(?i)^winning gpo$')
+
+                if ($IsFirewallRuleTable)
+                {
+                    $Direction = 'Inbound'
+
+                    if (Test-IsInSection -Element $Table -SectionTitles @('Outbound Rules'))
+                    {
+                        $Direction = 'Outbound'
+                    }
+
+                    Parse-StandardPolicyTable `
+                        -Result ([ref]$Result) `
+                        -Table $Table `
+                        -ReportName $ReportName `
+                        -Headers $Headers `
+                        -FirewallDetailMode `
+                        -FirewallDirection $Direction
+
+                    continue
+                }
+
+                if ($Headers.Count -ge 3 -and $Headers[$Headers.Count - 1] -match '(?i)^winning gpo$')
+                {
+                    Parse-StandardPolicyTable `
+                        -Result ([ref]$Result) `
+                        -Table $Table `
+                        -ReportName $ReportName `
+                        -Headers $Headers
+
+                    continue
+                }
+
+                if ($Headers.Count -eq 2 -and -not [string]::IsNullOrWhiteSpace($Headers[0]))
+                {
+                    Parse-LabeledTable `
+                        -Result ([ref]$Result) `
+                        -Table $Table `
+                        -ReportName $ReportName `
+                        -Headers $Headers
+
+                    continue
+                }
+
+                if ($Headers.Count -eq 0)
+                {
+                    $Cells0 = @(Get-AllTags -Root $Table -TagName 'TD')
+                    if ($Cells0.Count -gt 0)
+                    {
+                        Parse-KeyValueTable `
+                            -Result ([ref]$Result) `
+                            -Table $Table `
+                            -ReportName $ReportName
+                    }
+
+                    continue
+                }
+
+                # Anything else (Type/Name/Permission summary tables inside
+                # non-service contexts, unexpected shapes) is preserved but
+                # not compared.
+                [void]$Result.Unclassified.Add(
+                    (
+                        New-UnclassifiedRecord `
+                            -ReportName $ReportName `
+                            -Category ((Get-SectionBreadcrumb -Element $Table) -join ' / ') `
+                            -Value ($Headers -join ' | ') `
+                            -Reason "Unsupported table format"
+                    )
+                )
+            }
+            catch
+            {
+                [void]$Result.Unclassified.Add(
+                    (
+                        New-UnclassifiedRecord `
+                            -ReportName $ReportName `
+                            -Reason "Parser error (module line $($_.InvocationInfo.ScriptLineNumber)): $($_.Exception.Message)"
+                    )
+                )
+            }
+        }
+    }
+    finally
+    {
+        if ($null -ne $Doc)
+        {
+            try
+            {
+                [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($Doc)
+            }
+            catch
+            {
+            }
         }
     }
 
-$UnmappedCount =
-    @(
-        $MigrationCandidates |
-        Where-Object { $_.MappingStatus -in @('Unmapped', 'MappingFileMissing') }
-    ).Count
+    return $Result
+}
 
-# ------------------------------------------------------------
-# Statistics
-# ------------------------------------------------------------
-
-$Statistics =
-    [PSCustomObject]@{
-        Timestamp        = Get-Date
-        HtmlFiles        = $HtmlFiles.Count
-        ReportsParsed    = $TotalReports
-        Settings         = $AllSettings.Count
-        FirewallRules    = $AllFirewall.Count
-        CommonSettings   = @($CommonSettings).Count
-        CommonByName     = @($CommonSettingsByName).Count
-        UniqueSettings   = @($UniqueSettings).Count
-        Conflicts        = @($ConflictingSettings).Count
-        Duplicates       = @($DuplicateSettings).Count
-        Deprecated       = $DeprecatedSettings.Count
-        UnmappedSettings = $UnmappedCount
-        Unclassified     = $AllUnclassified.Count
-        ParseFailures    = $Failures.Count
-    }
-
-# ------------------------------------------------------------
-# Export Reports
-# ------------------------------------------------------------
-
-Export-Report $CommonSettings        "CommonSettings.csv"
-Export-Report $CommonSettingsByName  "CommonSettingsByName.csv"
-Export-Report $UniqueSettings        "UniqueSettings.csv"
-Export-Report $ConflictingSettings   "ConflictingSettings.csv"
-Export-Report $DuplicateSettings     "DuplicateSettings.csv"
-Export-Report $DeprecatedSettings    "DeprecatedPolicies.csv"
-Export-Report $Matrix                "MissingSettingsMatrix.csv"
-Export-Report $MigrationCandidates   "IntuneMigrationCandidates.csv"
-Export-Report $Statistics            "RunStatistics.csv"
-
-# ------------------------------------------------------------
-# Validation
-# ------------------------------------------------------------
-
-$ExpectedReports = @(
-    "ParsedSettings.csv"
-    "CommonSettings.csv"
-    "CommonSettingsByName.csv"
-    "UniqueSettings.csv"
-    "ConflictingSettings.csv"
-    "DuplicateSettings.csv"
-    "DeprecatedPolicies.csv"
-    "MissingSettingsMatrix.csv"
-    "FirewallRules.csv"
-    "IntuneMigrationCandidates.csv"
-    "UnclassifiedSettings.csv"
-    "ParserFailures.csv"
-    "RunStatistics.csv"
+Export-ModuleMember -Function @(
+    'Get-GPOSettingsFromHtml',
+    'Import-DeprecatedPolicyReference',
+    'Get-DeprecatedPolicyMatches'
 )
-
-Write-Host ""
-Write-Host "Generated Reports"
-Write-Host "-----------------"
-
-foreach ($Report in $ExpectedReports)
-{
-    $File = Join-Path $OutputFolder $Report
-
-    if (Test-Path -LiteralPath $File)
-    {
-        Write-Host "[OK] $Report"
-    }
-    else
-    {
-        Write-Warning "$Report missing"
-    }
-}
-
-# ------------------------------------------------------------
-# Summary
-# ------------------------------------------------------------
-
-Write-Host ""
-Write-Host "====================================="
-Write-Host "Report Generation Complete"
-Write-Host "====================================="
-Write-Host ""
-
-if ($Failures.Count -gt 0)
-{
-    Write-Warning "$($Failures.Count) HTML file(s) failed to parse and are excluded from the comparison (ParserFailures.csv)."
-}
-
-if ($AllUnclassified.Count -gt 0)
-{
-    Write-Warning "$($AllUnclassified.Count) unclassified entries are not part of the comparison (UnclassifiedSettings.csv). This is normal for RSoP HTML reports - check the Reason and Category columns to see what was skipped."
-}
-
-Write-Host "Reports written to:"
-Write-Host $OutputFolder
 
