@@ -79,6 +79,13 @@ UnclassifiedSettings.csv
 ParserFailures.csv
     HTML files that could not be parsed at all.
 
+FirewallDiagnostics.csv
+    One row per firewall rule table found in each report: its direction,
+    how many rule rows it had, how many detail tables were found, and how
+    many rules were added to FirewallRules.csv. A report where no firewall
+    rule table was recognized gets one row saying so. Use this when the
+    firewall files are empty to see which step failed.
+
 RunStatistics.csv
     Counts for the run.
 
@@ -106,7 +113,7 @@ no deprecated matches are reported.
 
 .NOTES
 Author:  Siconic
-Version: 1.5
+Version: 1.6
 
 Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
 schema (something that could break a workflow built on the old output).
@@ -114,6 +121,15 @@ MINOR bumps are bug fixes and additions that don't change existing columns
 or behavior. GPOCompareHtml.psm1 is versioned in lockstep with this script.
 
 Changelog:
+  1.6 - Firewall rules still were not reaching the firewall files in 1.5.
+        Rule tables are now recognized by their column headers (Name |
+        Description | Winning GPO) rather than by finding the Inbound Rules
+        heading, and direction comes from the nearest Inbound/Outbound
+        heading earlier in the document. Rows, cells and detail rows are now
+        read through .children and the table's own row list instead of
+        nextSibling, .rows and .cells, which may not behave the same in the
+        Windows HTMLFile object. New FirewallDiagnostics.csv shows, per
+        report, which step fails if rules are still missing.
   1.5 - GPOCompareHtml.psm1: row and cell lookups now read only a table's
         own rows and a row's own cells. The old lookup searched every depth,
         so no firewall rule's detail table was ever found and rules landed
@@ -371,6 +387,7 @@ $IntuneMappingCatalog =
 $AllSettings     = [System.Collections.ArrayList]::new()
 $AllFirewall     = [System.Collections.ArrayList]::new()
 $AllUnclassified = [System.Collections.ArrayList]::new()
+$FirewallDiagnostics = [System.Collections.ArrayList]::new()
 $Failures        = [System.Collections.ArrayList]::new()
 $ParsedReports   = [System.Collections.Generic.List[string]]::new()
 
@@ -430,6 +447,27 @@ foreach ($HtmlFile in $HtmlFiles)
             [void]$AllUnclassified.Add($Item)
         }
 
+        foreach ($Item in $Result.Diagnostics.FirewallTableInfo)
+        {
+            [void]$FirewallDiagnostics.Add($Item)
+        }
+
+        if ($Result.Diagnostics.FirewallTablesFound -eq 0)
+        {
+            [void]$FirewallDiagnostics.Add(
+                [PSCustomObject]@{
+                    ReportName        = $HtmlFile.BaseName
+                    Headers           = '(no firewall rule table recognized)'
+                    Direction         = ''
+                    DirectionSource   = ''
+                    TableRows         = 0
+                    RuleRows          = 0
+                    DetailTablesFound = 0
+                    RulesAdded        = 0
+                }
+            )
+        }
+
         $ParsedReports.Add($HtmlFile.BaseName)
 
         Write-Host "Settings      : $($Result.Settings.Count)"
@@ -478,6 +516,7 @@ Export-Report $AllSettings     "ParsedSettings.csv"
 Export-Report $FirewallOutput  "FirewallRules.csv"
 Export-Report $AllUnclassified "UnclassifiedSettings.csv"
 Export-Report $Failures        "ParserFailures.csv"
+Export-Report $FirewallDiagnostics "FirewallDiagnostics.csv"
 
 if ($AllSettings.Count -eq 0)
 {
@@ -1024,6 +1063,7 @@ $ExpectedReports = @(
     "IntuneMigrationCandidates.csv"
     "UnclassifiedSettings.csv"
     "ParserFailures.csv"
+    "FirewallDiagnostics.csv"
     "RunStatistics.csv"
 )
 
