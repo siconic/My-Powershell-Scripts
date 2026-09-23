@@ -284,7 +284,9 @@ did and didn't catch.
   only), IntuneType, IntuneSetting, Value, MappingStatus, Confidence (no
   policy name, GPO / report names or setting name; the GPOs of each
   policy are on the Summary). A firewall rules policy's worksheet has a
-  Conflict flag and the rule fields. `-PolicyNamePrefix` adds text to every policy name;
+  Conflict flag and the rule fields. Conflicts (Kind, Scope, Item, Value,
+  GPOs, PolicyName) and NotMigrated (Reason, Class, Extension, Category,
+  SettingName, Value, GPOs) keep the full detail. `-PolicyNamePrefix` adds text to every policy name;
   `-FilePrefix` picks one run when the folder has several. Run in Windows
   PowerShell 5.1 with synthetic XML-format output (3 GPOs, one case per
   rule): 10 policies (2 Baseline, 2 Shared, 6 Single) as worked out by

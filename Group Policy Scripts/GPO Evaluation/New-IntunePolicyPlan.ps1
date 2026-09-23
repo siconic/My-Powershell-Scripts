@@ -1141,12 +1141,16 @@ $NotMigratedRows =
         $NotMigrated |
         Sort-Object Reason, Extension, Category, SettingName |
         ForEach-Object {
+            # Full detail, like Conflicts: only the policy worksheets use
+            # the shortened column set.
             [PSCustomObject][ordered]@{
-                Reason        = $_.Reason
-                $SourceColumn = $_.Sources
-                Class         = $_.Class
-                SettingName   = $_.SettingName
-                Value         = $_.Value
+                Reason       = $_.Reason
+                Class        = $_.Class
+                Extension    = $_.Extension
+                Category     = $_.Category
+                SettingName  = $_.SettingName
+                Value        = $_.Value
+                $SourceLabel = $_.Sources
             }
         }
     )
