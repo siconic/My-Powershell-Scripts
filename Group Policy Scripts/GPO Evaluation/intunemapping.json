@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.1",
+  "schemaVersion": "1.2",
   "description": "GPOCompare mapping catalog for translating normalized GPO settings to Microsoft Intune migration targets.",
   "matchFields": [
     "Class",
@@ -12,6 +12,8 @@
     "Review": "A target area exists but each setting must be reviewed and mapped individually.",
     "Discover": "Search Intune (Settings Catalog / ADMX-backed) for the exact setting name.",
     "NoDirectReplacement": "No generic Intune equivalent. Assess per setting.",
+    "Mapped": "Set by the scripts from IntunePolicyMappings.json: the policy was mapped to this Intune setting by hand in a mapping workbook.",
+    "NoIntuneEquivalent": "Set by the scripts from IntunePolicyMappings.json: the policy was reviewed in a mapping workbook and has no Intune setting; see Notes.",
     "Unmapped": "Set by the script when no mapping entry matches the setting.",
     "MappingFileMissing": "Set by the script when this file was not found."
   },

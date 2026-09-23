@@ -80,6 +80,13 @@ FirewallSettingsUnique.csv
 IntuneMigrationCandidates.csv
     Every setting with its Intune mapping from the mapping file, plus a
     Deprecated flag.
+    Each setting is first looked up by policy name in IntunePolicyMappings.json
+    (mappings imported from manual mapping workbooks by
+    Import-IntuneMappingWorkbook.ps1): MappingStatus Mapped or
+    NoIntuneEquivalent, IntuneType = the workbook's Intune Setting,
+    IntuneSetting = its Intune Sub Setting, Notes = its remarks. Other
+    settings use the general rules in the Intune mapping file. MappingSource
+    shows which file and workbook each mapping came from.
 
 UnclassifiedSettings.csv
     Table shapes this parser does not recognize, and rows with no setting
@@ -132,6 +139,16 @@ missing, a warning is shown and the run continues.
 Path to DeprecatedPoliciesReference.md (same file the XML tool uses).
 Default: next to this script. Optional: if missing, a warning is shown and
 no deprecated matches are reported.
+.PARAMETER PolicyMappingPath
+Path to IntunePolicyMappings.json, the GPO policy to Intune setting
+mappings imported from manual mapping workbooks by
+Import-IntuneMappingWorkbook.ps1. Default: next to this script. Optional:
+if missing, a note is shown and only the general rules in the Intune
+mapping file are used. A policy found in this file is mapped from it
+first (MappingStatus Mapped or NoIntuneEquivalent, Confidence High); other
+settings use the general rules. The default file is scrubbed and has no
+remarks; to see remarks and unredacted names internally, import with
+-KeepSensitiveData and pass IntunePolicyMappings.Internal.json here.
 
 .PARAMETER FilePrefix
 Text added to the start of every output file name, followed by a hyphen.
@@ -193,8 +210,12 @@ Changelog:
         a count. If the ImportExcel
         module is missing, the script installs it for the current user;
         if that fails, or the workbook cannot be written, the output is
-        CSV files. No module changes; the module version is kept in
-        lockstep.
+        CSV files. Settings are first mapped by policy name from
+        IntunePolicyMappings.json (-PolicyMappingPath), which
+        Import-IntuneMappingWorkbook.ps1 builds from manual mapping
+        workbooks; IntuneMigrationCandidates has a new MappingSource
+        column and RunStatistics a MappedFromWorkbooks count.
+        No module changes; the module version is kept in lockstep.
   1.10 - New -FilePrefix parameter. The prefix and a hyphen are added to
          the start of every output file name (LS-CommonSettings.csv). If
          the parameter is not given, the script asks for it; an empty
@@ -289,6 +310,8 @@ param(
 
     [string]$DeprecatedReferencePath = (Join-Path $PSScriptRoot "DeprecatedPoliciesReference.md"),
 
+    [string]$PolicyMappingPath = (Join-Path $PSScriptRoot "IntunePolicyMappings.json"),
+
     [string]$FilePrefix,
 
     [ValidateSet('CSV', 'Excel')]
@@ -327,7 +350,8 @@ $ExpectedReports = @(
 # RunStatistics rows are shown in this order, which follows the worksheet
 # order above. Every worksheet except RunStatistics has a statistic whose
 # value is its number of rows. UnmappedSettings is the number of rows on
-# IntuneMigrationCandidates with MappingStatus Unmapped.
+# IntuneMigrationCandidates with MappingStatus Unmapped; MappedFromWorkbooks
+# the number mapped from IntunePolicyMappings.json.
 $StatisticWorksheets = [ordered]@{
     CommonSettings            = "CommonSettings"
     UniqueSettings            = "UniqueSettings"
@@ -335,6 +359,7 @@ $StatisticWorksheets = [ordered]@{
     FirewallRules             = "FirewallRules"
     IntuneMigrationCandidates = "IntuneMigrationCandidates"
     UnmappedSettings          = "IntuneMigrationCandidates"
+    MappedFromWorkbooks       = "IntuneMigrationCandidates"
     Duplicates                = "DuplicateSettings"
     Conflicts                 = "ConflictingSettings"
     Settings                  = "ParsedSettings"
@@ -894,6 +919,172 @@ function Export-ExcelWorkbook
     }
 }
 
+function Get-CategoryLeaf
+{
+    param(
+        [AllowNull()]
+        [string]$CategoryPath
+    )
+
+    # The last part of a category path, split on ">", "/" or "\". Same rule
+    # as Import-IntuneMappingWorkbook.ps1.
+    $Parts = @("$CategoryPath" -split '[>/\\]' | ForEach-Object { ($_ -replace '\s+', ' ').Trim() } | Where-Object { $_ -ne '' })
+
+    if ($Parts.Count -eq 0)
+    {
+        return ""
+    }
+
+    return $Parts[-1].ToLowerInvariant()
+}
+
+function Get-PolicyNameKey
+{
+    param(
+        [AllowNull()]
+        [string]$Class,
+
+        [AllowNull()]
+        [string]$Policy
+    )
+
+    # Class + policy name, case and spacing ignored. Same rule as
+    # Import-IntuneMappingWorkbook.ps1.
+    return "$("$Class".ToLowerInvariant())$Sep$(((("$Policy") -replace '\s+', ' ').Trim()).ToLowerInvariant())"
+}
+
+function Import-IntunePolicyMapping
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    # Returns a hashtable: class + policy name -> the mapping entries for
+    # that name (one per category), or $null when the file is missing.
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf))
+    {
+        Write-Host "Intune policy mappings: not found ($Path). Only the general rules in the Intune mapping file are used."
+        return $null
+    }
+
+    try
+    {
+        $Document =
+            Get-Content -LiteralPath $Path -Raw -Encoding UTF8 -ErrorAction Stop |
+            ConvertFrom-Json -ErrorAction Stop
+    }
+    catch
+    {
+        throw "Failed to load Intune policy mapping file '$Path': $($_.Exception.Message)"
+    }
+
+    $Index = @{}
+    $Count = 0
+
+    foreach ($Entry in @($Document.policies))
+    {
+        if ($null -eq $Entry)
+        {
+            continue
+        }
+
+        $Key = Get-PolicyNameKey -Class $Entry.class -Policy $Entry.policy
+
+        if (-not $Index.ContainsKey($Key))
+        {
+            $Index[$Key] = [System.Collections.ArrayList]::new()
+        }
+
+        [void]$Index[$Key].Add($Entry)
+        $Count++
+    }
+
+    Write-Host "Intune policy mappings: $Count policies loaded ($Path)"
+
+    return $Index
+}
+
+function Get-IntunePolicyMapping
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Setting,
+
+        [AllowNull()]
+        [hashtable]$Index,
+
+        [AllowNull()]
+        [hashtable]$NameAliases
+    )
+
+    # Returns the mapping entry for a setting, and whether the category had
+    # to be guessed, or $null when the policy is not in the file.
+    if ($null -eq $Index)
+    {
+        return $null
+    }
+
+    $Names = [System.Collections.ArrayList]::new()
+    [void]$Names.Add([string]$Setting.SettingName)
+
+    if (($null -ne $NameAliases) -and $NameAliases.ContainsKey([string]$Setting.SettingName))
+    {
+        [void]$Names.Add($NameAliases[[string]$Setting.SettingName])
+    }
+
+    $Candidates = @()
+
+    foreach ($Name in $Names)
+    {
+        $Key = Get-PolicyNameKey -Class $Setting.Class -Policy $Name
+
+        if ($Index.ContainsKey($Key))
+        {
+            $Candidates = @($Index[$Key])
+            break
+        }
+    }
+
+    if ($Candidates.Count -eq 0)
+    {
+        return $null
+    }
+
+    if ($Candidates.Count -eq 1)
+    {
+        return [PSCustomObject]@{
+            Entry     = $Candidates[0]
+            Ambiguous = $false
+        }
+    }
+
+    # The policy name has entries in several categories (for example the
+    # Application and Security event logs). Use the entry whose last
+    # category part is a part of the setting's category.
+    $SettingParts = @("$($Setting.Category)" -split '[>/\\]' | ForEach-Object { (($_ -replace '\s+', ' ').Trim()).ToLowerInvariant() } | Where-Object { $_ -ne '' })
+
+    foreach ($Candidate in $Candidates)
+    {
+        $Leaf = Get-CategoryLeaf -CategoryPath $Candidate.categoryPath
+
+        if (($Leaf -ne '') -and ($SettingParts -contains $Leaf))
+        {
+            return [PSCustomObject]@{
+                Entry     = $Candidate
+                Ambiguous = $false
+            }
+        }
+    }
+
+    return [PSCustomObject]@{
+        Entry     = $Candidates[0]
+        Ambiguous = $true
+    }
+}
+
 function Import-IntuneMapping
 {
     [CmdletBinding()]
@@ -1021,9 +1212,24 @@ Import-Module -Name $ModulePath -Force
 Import-DeprecatedPolicyReference `
     -Path $DeprecatedReferencePath
 
+# The HTML reports show display names, the same names the mapping
+# workbooks use, so no name aliases are needed (Compare-GPOXml.ps1 has a
+# table for the internal names in XML exports).
+$PolicyNameAliases = $null
+
 $IntuneMappingCatalog =
     Import-IntuneMapping `
         -Path $IntuneMappingPath
+
+# Not wrapped in @(): the function returns one hashtable (or $null), not a
+# collection.
+# File name shown in MappingSource (IntunePolicyMappings.json, or the
+# internal file written with -KeepSensitiveData).
+$PolicyMappingFileName = [System.IO.Path]::GetFileName($PolicyMappingPath)
+
+$PolicyMappingIndex =
+    Import-IntunePolicyMapping `
+        -Path $PolicyMappingPath
 
 # ------------------------------------------------------------
 # Storage
@@ -1742,7 +1948,13 @@ foreach ($Key in $SortedNameKeys)
 $MigrationCandidates =
     foreach ($Setting in $AllSettings)
     {
-        $Map = Get-IntuneMapping -Setting $Setting -Catalog $IntuneMappingCatalog
+        $PolicyMatch = Get-IntunePolicyMapping -Setting $Setting -Index $PolicyMappingIndex -NameAliases $PolicyNameAliases
+        $Map         = $null
+
+        if ($null -eq $PolicyMatch)
+        {
+            $Map = Get-IntuneMapping -Setting $Setting -Catalog $IntuneMappingCatalog
+        }
 
         $DeprecatedKey =
             @(
@@ -1756,23 +1968,92 @@ $MigrationCandidates =
 
         $DeprecatedMatch = $DeprecatedLookup[$DeprecatedKey]
 
-        if ($null -eq $IntuneMappingCatalog)
+        if ($null -ne $PolicyMatch)
+        {
+            # Mapped from the manual mapping workbooks.
+            $PolicyEntry   = $PolicyMatch.Entry
+            $MappingStatus = $PolicyEntry.status
+            $Confidence    = 'High'
+            $IntuneType    = $PolicyEntry.intuneSetting
+            $IntuneSetting = $PolicyEntry.intuneSubSetting
+            $OmaUri        = $null
+            # Workbook and worksheet names, when the file has them (files written
+            # with -KeepSensitiveData). A scrubbed file's sources are its own file
+            # name, so only the file name is shown.
+            $EntrySources = @($PolicyEntry.sources | Where-Object { ($null -ne $_) -and ($_ -ne $PolicyMappingFileName) })
+
+            if ($EntrySources.Count -gt 0)
+            {
+                $MappingSource = "$($PolicyMappingFileName): $($EntrySources -join '; ')"
+            }
+            else
+            {
+                $MappingSource = $PolicyMappingFileName
+            }
+
+            $NoteParts = [System.Collections.ArrayList]::new()
+
+            if (-not [string]::IsNullOrWhiteSpace($PolicyEntry.remarks))
+            {
+                [void]$NoteParts.Add($PolicyEntry.remarks)
+            }
+
+            $Alternates = @($PolicyEntry.alternates | Where-Object { $null -ne $_ })
+
+            if ($Alternates.Count -gt 0)
+            {
+                [void]$NoteParts.Add("Other mappings in the workbooks: $(@($Alternates | ForEach-Object { "$($_.intuneSetting) >> $($_.intuneSubSetting)" }) -join '; ')")
+            }
+
+            if ($PolicyMatch.Ambiguous)
+            {
+                [void]$NoteParts.Add("This policy name is mapped in several categories and the category could not be matched; the first mapping was used.")
+            }
+
+            if ($NoteParts.Count -eq 0)
+            {
+                # Scrubbed mapping files have no remarks.
+                if ($PolicyEntry.status -eq 'NoIntuneEquivalent')
+                {
+                    [void]$NoteParts.Add("Reviewed in a mapping workbook: no Intune equivalent.")
+                }
+                else
+                {
+                    [void]$NoteParts.Add("Mapped from the manual mapping workbooks.")
+                }
+            }
+
+            $MappingNotes = @($NoteParts) -join ' | '
+        }
+        elseif ($null -eq $IntuneMappingCatalog)
         {
             $MappingStatus = 'MappingFileMissing'
             $Confidence    = 'None'
             $MappingNotes  = 'Intune mapping file was not loaded.'
+            $IntuneType    = $null
+            $IntuneSetting = $null
+            $OmaUri        = $null
+            $MappingSource = $null
         }
         elseif ($null -ne $Map)
         {
             $MappingStatus = $Map.mappingStatus
             $Confidence    = $Map.confidence
             $MappingNotes  = $Map.notes
+            $IntuneType    = $Map.intuneType
+            $IntuneSetting = $Map.intuneSetting
+            $OmaUri        = $Map.omaUri
+            $MappingSource = "intunemapping.json (general rule)"
         }
         else
         {
             $MappingStatus = 'Unmapped'
             $Confidence    = 'None'
             $MappingNotes  = 'No matching entry in the Intune mapping file.'
+            $IntuneType    = $null
+            $IntuneSetting = $null
+            $OmaUri        = $null
+            $MappingSource = $null
         }
 
         [PSCustomObject]@{
@@ -1785,12 +2066,13 @@ $MigrationCandidates =
             WinningGPO             = $Setting.WinningGPO
             Deprecated             = if ($null -ne $DeprecatedMatch) { 'Yes' } else { 'No' }
             RecommendedReplacement = if ($null -ne $DeprecatedMatch) { $DeprecatedMatch.RecommendedReplacement } else { $null }
-            IntuneType             = if ($null -ne $Map) { $Map.intuneType } else { $null }
-            IntuneSetting          = if ($null -ne $Map) { $Map.intuneSetting } else { $null }
-            OMAURI                 = if ($null -ne $Map) { $Map.omaUri } else { $null }
+            IntuneType             = $IntuneType
+            IntuneSetting          = $IntuneSetting
+            OMAURI                 = $OmaUri
             MappingStatus          = $MappingStatus
             Confidence             = $Confidence
             Notes                  = $MappingNotes
+            MappingSource          = $MappingSource
         }
     }
 
@@ -1798,6 +2080,13 @@ $UnmappedCount =
     @(
         $MigrationCandidates |
         Where-Object { $_.MappingStatus -in @('Unmapped', 'MappingFileMissing') }
+    ).Count
+
+# Settings mapped from the manual mapping workbooks (the policy mapping file).
+$WorkbookMappedCount =
+    @(
+        $MigrationCandidates |
+        Where-Object { ("$($_.MappingSource)" -eq $PolicyMappingFileName) -or "$($_.MappingSource)".StartsWith("$($PolicyMappingFileName):") }
     ).Count
 
 # ------------------------------------------------------------
@@ -1827,6 +2116,7 @@ $Statistics =
         MissingSettingsMatrix     = @($Matrix).Count
         IntuneMigrationCandidates = @($MigrationCandidates).Count
         FirewallDiagnostics       = @($FirewallDiagnostics).Count
+        MappedFromWorkbooks       = $WorkbookMappedCount
     }
 
 # ------------------------------------------------------------

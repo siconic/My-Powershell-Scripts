@@ -33,6 +33,14 @@ did and didn't catch.
   test rows: the statistics linked to the worksheets present and were
   listed in worksheet order, with UnmappedSettings linked. A full XML
   run has not been tested, because no GPO XML exports were available.
+  Intune mapping from manual workbooks, the same as HTML 2.0, plus a
+  table that translates the internal names in XML exports to display
+  names for this lookup: 15 account policies (`PasswordHistorySize` ->
+  "Enforce password history") and 45 user rights (`SeNetworkLogonRight` ->
+  "Access this computer from the network"). The table is written from the
+  standard Windows names and has not been checked against real GPO XML
+  exports. Tested with the lookup functions: `PasswordHistorySize` and
+  `SeNetworkLogonRight` found their workbook mappings.
 
 - **3.3** - New `-FilePrefix` parameter, the same as HTML 1.10. The prefix
   and a hyphen are added to the start of every output file name
@@ -125,6 +133,32 @@ did and didn't catch.
   number of rows there with MappingStatus `Unmapped` (checked in Excel: 3
   and 3; following the link opened IntuneMigrationCandidates).
   `RunStatistics.csv` keeps its column order.
+  Intune mapping from manual workbooks: each setting is first looked up
+  in `IntunePolicyMappings.json` (new `-PolicyMappingPath`, default next
+  to the script; built by `Import-IntuneMappingWorkbook.ps1`) by class +
+  policy name, case and spacing ignored. When a policy name has entries
+  in several categories (event logs, WinRM Client/Service), the entry
+  whose last category part is part of the setting's category is used;
+  otherwise the first, with a note. A match gives MappingStatus `Mapped`
+  or `NoIntuneEquivalent`, Confidence `High`, IntuneType = the workbook's
+  Intune Setting, IntuneSetting = its Intune Sub Setting, Notes = its
+  remarks and any alternate mappings. Other settings use the general
+  rules in `intunemapping.json` as before. IntuneMigrationCandidates has
+  a new last column, `MappingSource` (the mapping file's name; for a file
+  written with -KeepSensitiveData also the workbook / worksheet labels; or
+  "intunemapping.json (general rule)");
+  RunStatistics has a new last value, `MappedFromWorkbooks`, linked to
+  IntuneMigrationCandidates. Without the file, a note is shown and the run
+  is unchanged. A scrubbed file has no remarks, so Notes shows "Reviewed in
+  a mapping workbook: no Intune equivalent." or "Mapped from the manual
+  mapping workbooks."; an internal file (-KeepSensitiveData) gives its
+  remarks. Tested with the lookup functions (display name, case and
+  spacing, event log category, User vs Computer, unknown policy), and in
+  full runs with small test mapping files whose policy names matched the
+  test reports: a scrubbed NoIntuneEquivalent entry and an internal Mapped
+  entry with a remark and an alternate both gave the expected status,
+  Intune columns, Notes, MappingSource (with the loaded file's name) and
+  MappedFromWorkbooks count.
 
 - **1.10** - New `-FilePrefix` parameter. The prefix and a hyphen are added
   to the start of every output file name (`LS-CommonSettings.csv`). A
@@ -221,15 +255,65 @@ did and didn't catch.
   Unclassified) rather than parsed, since their per-field layout doesn't
   fit the generic table handlers.
 
+## Intune mapping import (Import-IntuneMappingWorkbook.ps1) - current: 1.0
+
+- **1.0** - New script. Reads manual GPO-to-Intune mapping workbooks
+  (.xlsx files or folders) and writes `IntunePolicyMappings.json`, which
+  both compare scripts use. Finds the header row (a `Policy` column and a
+  column containing "Intune") in each worksheet and skips worksheets
+  without one (GPO summary/metadata, firewall rules, Preferences).
+  Recognizes varying column names (`Intune Setiing`, `Intune Sub
+  Settings`, `Intune Setting Sub-Setting`, `Rema`, `Comment`, `Migration
+  status`), category rows (merged or not) and Intune cells merged over
+  several rows. A policy is keyed by class + policy name + the last part
+  of its category path. Rows are Mapped (Intune setting given),
+  NoIntuneEquivalent (remark only) or blank (not stored; may be mapped in
+  another workbook). Different mappings for one policy: the first read is
+  used, the others kept as alternates. Adds to the existing file, or
+  starts over with `-Rebuild`; a second run with the same workbooks
+  leaves the file unchanged. Optional `-ReportPath` CSV per row.
+  By default the file is scrubbed and safe for a public repository: GPO
+  values and remarks are not stored (remarks are still read to tell a
+  reviewed "no equivalent" row from a blank one), permission rows
+  (`Allow:` / `Deny:`) are skipped, Intune cells without a letter or digit
+  count as empty, and every text is redacted (URLs, UNC paths, email and
+  IP addresses, host and domain names, `DOMAIN\account`, and the terms in
+  the local, uncommitted `IntuneMappingRedactions.txt`) to placeholders
+  such as `<ORG>`. In a scrubbed file every source (and alternate source)
+  is the mapping file's own name, not a workbook or worksheet name; an
+  older scrubbed file is converted the same way when it is added to, and
+  the `-ReportPath` CSV still shows the workbook and worksheet per row.
+  `-KeepSensitiveData` writes an unscrubbed file with
+  remarks for internal use, to `IntunePolicyMappings.Internal.json` by
+  default, with a warning; the file records `"scrubbed": false`, and
+  scrubbed and unscrubbed data are never merged into one file (tested:
+  both directions refused, the target file unchanged). Run in
+  Windows PowerShell 5.1 on four workbooks: 741 policy rows, 412 policies
+  (349 Mapped, 63 NoIntuneEquivalent), 221 blank rows (134 mapped in
+  another workbook, 73 policies not mapped anywhere), 8 permission rows
+  skipped, 10 policies with alternates (all the same Intune setting
+  written differently). A scan of the written file found no domain,
+  account, URL, IP or email address, and no organization term.
+
 ## Shared reference files
 
 - **DeprecatedPoliciesReference.md** - 1.0. Table format
   (Technology/MatchType/Pattern/Status/Replacement/CategoryFilter), read by
   both toolsets.
-- **intunemapping.json** - schemaVersion 1.1 (tracked separately, since
+- **intunemapping.json** - schemaVersion 1.2 (tracked separately, since
   it's a data schema version rather than a tool version). Includes a
   `Security | * | *` fallback and treats Registry Settings as applying to
-  any class.
+  any class. 1.2 adds the `Mapped` and `NoIntuneEquivalent` status
+  definitions used for IntunePolicyMappings.json matches.
+- **IntunePolicyMappings.json** - schemaVersion 1.0. Written by
+  Import-IntuneMappingWorkbook.ps1; do not edit by hand (edit the
+  workbook and import again with `-Rebuild`). One entry per policy:
+  class, policy, categoryPath, status, intuneSetting, intuneSubSetting,
+  sources, alternates (intuneSetting, intuneSubSetting, source); in the
+  committed, scrubbed file every source is "IntunePolicyMappings.json". Top-level
+  `scrubbed`: true for the committed file, which has no remarks; false for
+  an internal file written with `-KeepSensitiveData`, which adds `remarks`
+  to each entry and alternate.
 
 ## Known open items (not yet fixed)
 
