@@ -280,10 +280,11 @@ did and didn't catch.
   header (worksheet names are "P01 " + a shortened name, because Excel
   allows 31 characters; -PolicyNamePrefix is left out of them); then
   Conflicts and NotMigrated. A settings policy's worksheet has only the
-  columns needed to build it: GPOName / ReportName, Class, SettingName,
-  Value, WinningGPO for HTML, IntuneType, IntuneSetting, MappingStatus,
-  Confidence. A firewall rules policy's worksheet has the GPOs, a Conflict
-  flag and the rule fields. `-PolicyNamePrefix` adds text to every policy name;
+  columns needed to build it, in this order: Class, WinningGPO (HTML
+  only), IntuneType, IntuneSetting, Value, MappingStatus, Confidence (no
+  policy name, GPO / report names or setting name; the GPOs of each
+  policy are on the Summary). A firewall rules policy's worksheet has a
+  Conflict flag and the rule fields. `-PolicyNamePrefix` adds text to every policy name;
   `-FilePrefix` picks one run when the folder has several. Run in Windows
   PowerShell 5.1 with synthetic XML-format output (3 GPOs, one case per
   rule): 10 policies (2 Baseline, 2 Shared, 6 Single) as worked out by

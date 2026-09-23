@@ -51,11 +51,11 @@ One worksheet per proposed policy (P01, P02, ... in plan order)
     Titled with the full policy name, with a link back to Summary. Excel
     limits worksheet names to 31 characters, so the name is the number and
     a shortened policy name (for example "P01 Baseline Dev SC"). A settings
-    policy has only the columns needed to build it: GPOName (XML) or
-    ReportName (HTML) - the GPOs or reports the setting is in - Class,
-    SettingName, Value, WinningGPO (HTML only), IntuneType, IntuneSetting,
-    MappingStatus, Confidence. A firewall rules policy has the GPOs, a
-    Conflict flag and the rule fields.
+    policy has only the columns needed to build it, in this order: Class,
+    WinningGPO (HTML only), IntuneType, IntuneSetting, Value,
+    MappingStatus, Confidence. A firewall rules policy has a Conflict flag
+    and the rule fields. The GPOs or reports of each policy are on the
+    Summary.
 
 Conflicts
     Settings and firewall rules configured differently in different GPOs.
@@ -1061,13 +1061,14 @@ function Get-PolicySheetRows
     $Settings = @($Group.Items | Where-Object { $null -eq $_.PSObject.Properties['Rule'] })
     $Rules    = @($Group.Items | Where-Object { $null -ne $_.PSObject.Properties['Rule'] })
 
+    # The policy name is the worksheet, and the GPOs / reports are on the
+    # Summary, so neither is repeated here. Column order as requested:
+    # Class, WinningGPO (HTML only), IntuneType, IntuneSetting, Value,
+    # MappingStatus, Confidence.
     foreach ($Item in @($Settings | Sort-Object Extension, Category, SettingName))
     {
         $Out = [ordered]@{
-            $SourceColumn = $Item.Sources -join '; '
-            Class         = $Item.Class
-            SettingName   = $Item.SettingName
-            Value         = $Item.Value
+            Class = $Item.Class
         }
 
         if ($HasWinningGpo)
@@ -1077,6 +1078,7 @@ function Get-PolicySheetRows
 
         $Out.IntuneType    = $Item.IntuneType
         $Out.IntuneSetting = $Item.IntuneSetting
+        $Out.Value         = $Item.Value
         $Out.MappingStatus = $Item.MappingStatus
         $Out.Confidence    = $Item.Confidence
 
@@ -1086,8 +1088,7 @@ function Get-PolicySheetRows
     foreach ($Item in @($Rules | Sort-Object { Get-PropertyValue $_.Rule @('Name') }))
     {
         $Out = [ordered]@{
-            $SourceColumn = $Item.Sources -join '; '
-            Conflict      = if ($Item.IsConflict) { 'Yes' } else { 'No' }
+            Conflict = if ($Item.IsConflict) { 'Yes' } else { 'No' }
         }
 
         foreach ($Property in $Item.Rule.PSObject.Properties)
