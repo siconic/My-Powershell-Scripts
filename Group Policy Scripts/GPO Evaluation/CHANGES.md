@@ -272,20 +272,29 @@ did and didn't catch.
   mapping"). Firewall rules are grouped the same way by name + direction
   + rule fields. Deprecated and NoIntuneEquivalent settings go to
   NotMigrated; settings and rules with different values in different GPOs
-  are listed on Conflicts. Worksheets (blue tables): Summary (counts
-  linked to their worksheets), PolicyPlan, PolicySettings (only the
-  columns needed to build the policies: PolicyName, GPOName / ReportName,
-  Class, SettingName, Value, WinningGPO for HTML, IntuneType,
-  IntuneSetting, MappingStatus, Confidence), FirewallRules, Conflicts,
-  NotMigrated. `-PolicyNamePrefix` adds text to every policy name;
+  are listed on Conflicts. Worksheets (blue tables): Summary (the counts,
+  each linked to its worksheet or table, and below them the policy plan,
+  one row per proposed policy, each name linked to its worksheet); one
+  worksheet per proposed policy, in plan order, titled with the full
+  policy name, with a "Back to Summary" link and a frozen title and
+  header (worksheet names are "P01 " + a shortened name, because Excel
+  allows 31 characters; -PolicyNamePrefix is left out of them); then
+  Conflicts and NotMigrated. A settings policy's worksheet has only the
+  columns needed to build it: GPOName / ReportName, Class, SettingName,
+  Value, WinningGPO for HTML, IntuneType, IntuneSetting, MappingStatus,
+  Confidence. A firewall rules policy's worksheet has the GPOs, a Conflict
+  flag and the rule fields. `-PolicyNamePrefix` adds text to every policy name;
   `-FilePrefix` picks one run when the folder has several. Run in Windows
   PowerShell 5.1 with synthetic XML-format output (3 GPOs, one case per
   rule): 10 policies (2 Baseline, 2 Shared, 6 Single) as worked out by
   hand, conflicts and not-migrated settings listed, list values in a
   different order grouped together, `=` text kept as text. Also run on
   HTML-script CSV output and on a compare workbook with a prefix, and a
-  folder with two runs stopped without `-FilePrefix`. Not yet run on real
-  GPO exports.
+  folder with two runs stopped without `-FilePrefix`. Checked in Excel:
+  13 worksheets in order (Summary, P01-P10, Conflicts, NotMigrated), all
+  names within 31 characters, every Summary link resolved, a policy link
+  opened its worksheet and "Back to Summary" returned. Not yet run on
+  real GPO exports.
 
 ## Intune mapping import (Import-IntuneMappingWorkbook.ps1) - current: 1.0
 

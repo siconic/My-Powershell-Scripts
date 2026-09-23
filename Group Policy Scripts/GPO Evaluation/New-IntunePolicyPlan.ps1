@@ -42,20 +42,20 @@ For Compare-GPOHtml.ps1 output, each input "GPO" is an RSoP report.
 Workbook written to OutputFolder (every worksheet is a blue Excel table):
 
 Summary
-    Counts for the run. Each count links to its worksheet.
+    Counts for the run (each links to its worksheet or table), and below
+    them the policy plan: one row per proposed Intune policy with its
+    worksheet, tier, GPOs, scope, type and number of settings or firewall
+    rules. Each policy name links to its worksheet.
 
-PolicyPlan
-    One row per proposed Intune policy: name, tier, GPOs, scope, type and
-    number of settings or firewall rules.
-
-PolicySettings
-    Every placed setting, with only the columns needed to build the Intune
-    policies: PolicyName, GPOName (XML) or ReportName (HTML) - the GPOs or
-    reports the setting is in - Class, SettingName, Value, WinningGPO (HTML
-    only), IntuneType, IntuneSetting, MappingStatus, Confidence.
-
-FirewallRules
-    Every firewall rule with its proposed policy and GPOs.
+One worksheet per proposed policy (P01, P02, ... in plan order)
+    Titled with the full policy name, with a link back to Summary. Excel
+    limits worksheet names to 31 characters, so the name is the number and
+    a shortened policy name (for example "P01 Baseline Dev SC"). A settings
+    policy has only the columns needed to build it: GPOName (XML) or
+    ReportName (HTML) - the GPOs or reports the setting is in - Class,
+    SettingName, Value, WinningGPO (HTML only), IntuneType, IntuneSetting,
+    MappingStatus, Confidence. A firewall rules policy has the GPOs, a
+    Conflict flag and the rule fields.
 
 Conflicts
     Settings and firewall rules configured differently in different GPOs.
@@ -364,6 +364,27 @@ function ConvertTo-ExcelSheetRows
     }
 }
 
+function Set-LinkCell
+{
+    param(
+        [Parameter(Mandatory)]
+        [object]$Cell,
+
+        [Parameter(Mandatory)]
+        [string]$Worksheet,
+
+        [Parameter(Mandatory)]
+        [string]$Text,
+
+        [string]$Address = 'A1'
+    )
+
+    # A blue, underlined link to a cell in this workbook.
+    $Cell.Hyperlink = [OfficeOpenXml.ExcelHyperLink]::new("'$($Worksheet)'!$($Address)", $Text)
+    $Cell.Style.Font.UnderLine = $true
+    $Cell.Style.Font.Color.SetColor([System.Drawing.Color]::FromArgb(5, 99, 193))
+}
+
 function Write-PlanSheet
 {
     param(
@@ -374,13 +395,24 @@ function Write-PlanSheet
         [string]$Name,
 
         [AllowNull()]
-        [object[]]$Rows
+        [object[]]$Rows,
+
+        # Optional title in row 1, above the table, with a link back to the
+        # Summary worksheet.
+        [string]$Title,
+
+        [string]$TableName
     )
 
     # One worksheet as a blue Excel table with a frozen header row, text
     # kept as text.
     $SheetRows = @($Rows)
     $TextCells = @()
+
+    if ([string]::IsNullOrWhiteSpace($TableName))
+    {
+        $TableName = "$($Name)Table"
+    }
 
     if ($SheetRows.Count -eq 0)
     {
@@ -394,19 +426,90 @@ function Write-PlanSheet
         $script:TruncatedCells += $Converted.Truncated
     }
 
-    $Package = $SheetRows |
-        Export-Excel -Path $Path -WorksheetName $Name -TableName "$($Name)Table" -TableStyle Medium2 -FreezeTopRow -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
+    if ([string]::IsNullOrWhiteSpace($Title))
+    {
+        $Package = $SheetRows |
+            Export-Excel -Path $Path -WorksheetName $Name -TableName $TableName -TableStyle Medium2 -FreezeTopRow -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
+
+        $RowOffset = 0
+    }
+    else
+    {
+        # Title in row 1, table header in row 2; rows 1-2 stay visible.
+        $Package = $SheetRows |
+            Export-Excel -Path $Path -WorksheetName $Name -Title $Title -TitleBold -TitleSize 14 -TableName $TableName -TableStyle Medium2 -FreezePane 3, 1 -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
+
+        $RowOffset = 1
+    }
 
     $Worksheet = $Package.Workbook.Worksheets[$Name]
 
     foreach ($TextCell in $TextCells)
     {
-        $Cell         = $Worksheet.Cells[$TextCell.Row, $TextCell.Column]
+        # Parentheses needed: the comma binds more tightly than +.
+        $Cell         = $Worksheet.Cells[($TextCell.Row + $RowOffset), $TextCell.Column]
         $Cell.Formula = ""
         $Cell.Value   = $TextCell.Value
     }
 
+    if (-not [string]::IsNullOrWhiteSpace($Title))
+    {
+        # Above the last table column, so it does not cover the title.
+        $LastColumn = @($SheetRows[0].PSObject.Properties).Count
+        Set-LinkCell -Cell $Worksheet.Cells[1, [Math]::Max(2, $LastColumn)] -Worksheet 'Summary' -Text 'Back to Summary'
+    }
+
     Close-ExcelPackage -ExcelPackage $Package
+}
+
+function Get-PolicySheetName
+{
+    param(
+        [int]$Number,
+
+        [Parameter(Mandatory)]
+        [string]$PolicyName
+    )
+
+    # Excel worksheet names are at most 31 characters and cannot contain
+    # [ ] : * ? / \. The name is "P" + number + a shortened policy name;
+    # the number keeps it unique. The full name is the sheet's title.
+    $Short = $PolicyName
+
+    # Hashtables, not @('from', 'to') pairs: inside @( ) PowerShell flattens
+    # nested arrays into one list of strings.
+    $Replacements = @(
+        @{ From = ' - Device - ';                            To = ' Dev ' }
+        @{ From = ' - User - ';                              To = ' User ' }
+        @{ From = ' - Unknown - ';                           To = ' Unk ' }
+        @{ From = 'Endpoint security - ';                    To = 'ES ' }
+        @{ From = 'Settings Catalog';                        To = 'SC' }
+        @{ From = 'Account protection';                      To = 'Acct' }
+        @{ From = 'Attack surface reduction';                To = 'ASR' }
+        @{ From = 'Disk encryption';                         To = 'Disk enc' }
+        @{ From = 'Firewall rules';                          To = 'FW rules' }
+        @{ From = 'Firewall';                                To = 'FW' }
+        @{ From = 'Needs review (no direct Intune policy)';  To = 'Review' }
+        @{ From = 'Needs mapping';                           To = 'Unmapped' }
+        @{ From = 'Remediation script';                      To = 'Script' }
+        @{ From = ' + ';                                     To = '+' }
+        @{ From = 'Only ';                                   To = '' }
+    )
+
+    foreach ($Replacement in $Replacements)
+    {
+        $Short = $Short.Replace($Replacement.From, $Replacement.To)
+    }
+
+    $Short = ($Short -replace '[\[\]:\*\?/\\]', '').Trim().Trim("'")
+    $Name  = "P$("$Number".PadLeft(2, '0')) $Short"
+
+    if ($Name.Length -gt 31)
+    {
+        $Name = $Name.Substring(0, 31)
+    }
+
+    return $Name.TrimEnd().TrimEnd("'")
 }
 
 function Write-SummarySheet
@@ -416,20 +519,38 @@ function Write-SummarySheet
         [string]$Path,
 
         [Parameter(Mandatory)]
-        [object[]]$Rows
+        [object[]]$Rows,
+
+        [AllowNull()]
+        [object[]]$PlanRows
     )
 
-    # Two-column table (Item, Value) with a title. Rows with a Worksheet are
-    # links to that worksheet, as on the compare scripts' RunStatistics.
+    # The Summary worksheet: the counts table (Item, Value) with a title,
+    # and below it the policy plan table with a title. A count with a
+    # Worksheet links to that worksheet ('#Plan' = the policy plan table
+    # below). Each policy name links to its own worksheet.
     $TableRows = @($Rows | ForEach-Object { [PSCustomObject]@{ Item = $_.Item; Value = $_.Value } })
 
+    # Row 1: title, row 2: counts header, then the counts, one empty row,
+    # the plan title and the plan header.
+    $PlanTitleRow = 2 + $TableRows.Count + 2
+
     $Package = $TableRows |
-        Export-Excel -Path $Path -WorksheetName 'Summary' -Title 'Intune Policy Plan' -TitleBold -TitleSize 14 -TableName 'SummaryTable' -TableStyle Medium2 -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
+        Export-Excel -Path $Path -WorksheetName 'Summary' -Title 'Intune Policy Plan' -TitleBold -TitleSize 14 -TableName 'SummaryTable' -TableStyle Medium2 -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
+
+    $PlanTable = @($PlanRows)
+
+    if ($PlanTable.Count -eq 0)
+    {
+        $PlanTable = @([PSCustomObject]@{ Result = "No rows" })
+    }
+
+    $Package = $PlanTable |
+        Export-Excel -ExcelPackage $Package -WorksheetName 'Summary' -StartRow $PlanTitleRow -Title 'Proposed Intune Policies' -TitleBold -TitleSize 14 -TableName 'PolicyPlanTable' -TableStyle Medium2 -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
 
     $Worksheet = $Package.Workbook.Worksheets['Summary']
-    $Worksheet.Column(2).Style.HorizontalAlignment = [OfficeOpenXml.Style.ExcelHorizontalAlignment]::Left
 
-    # Row 1 is the title, row 2 the table header.
+    # Counts: row 3 is the first count.
     $RowNumber = 2
 
     foreach ($Row in $Rows)
@@ -441,10 +562,23 @@ function Write-SummarySheet
             continue
         }
 
-        $Cell           = $Worksheet.Cells[$RowNumber, 1]
-        $Cell.Hyperlink = [OfficeOpenXml.ExcelHyperLink]::new("'$($Row.Worksheet)'!A1", $Row.Item)
-        $Cell.Style.Font.UnderLine = $true
-        $Cell.Style.Font.Color.SetColor([System.Drawing.Color]::FromArgb(5, 99, 193))
+        if ($Row.Worksheet -eq '#Plan')
+        {
+            Set-LinkCell -Cell $Worksheet.Cells[$RowNumber, 1] -Worksheet 'Summary' -Text $Row.Item -Address "A$($PlanTitleRow)"
+        }
+        else
+        {
+            Set-LinkCell -Cell $Worksheet.Cells[$RowNumber, 1] -Worksheet $Row.Worksheet -Text $Row.Item
+        }
+    }
+
+    # Policy names: the plan header is one row below the plan title.
+    $RowNumber = $PlanTitleRow + 1
+
+    foreach ($Row in @($PlanRows))
+    {
+        $RowNumber++
+        Set-LinkCell -Cell $Worksheet.Cells[$RowNumber, 1] -Worksheet $Row.Worksheet -Text $Row.PolicyName
     }
 
     Close-ExcelPackage -ExcelPackage $Package
@@ -830,9 +964,11 @@ $OrderedGroups =
 # Shared groups with long GPO lists get a number instead of the list.
 $SharedNumbers = @{}
 $PolicyPlan    = [System.Collections.ArrayList]::new()
+$PolicyNumber  = 0
 
 foreach ($Group in $OrderedGroups)
 {
+    $PolicyNumber++
     $Sources = @($Group.Sources)
     $Tier    = Get-TierName -SourceCount $Sources.Count -TotalSources $AllSources.Count
 
@@ -869,6 +1005,13 @@ foreach ($Group in $OrderedGroups)
     }
 
     $PolicyName = "$($PolicyNamePrefix)$GroupLabel - $($Group.Scope) - $($Group.PolicyType)"
+    # The worksheet name leaves out -PolicyNamePrefix: it is the same on
+    # every sheet and would use up the 31-character limit.
+    $SheetName  = Get-PolicySheetName -Number $PolicyNumber -PolicyName "$GroupLabel - $($Group.Scope) - $($Group.PolicyType)"
+
+    $Group | Add-Member -NotePropertyName PolicyName -NotePropertyValue $PolicyName
+    $Group | Add-Member -NotePropertyName SheetName  -NotePropertyValue $SheetName
+    $Group | Add-Member -NotePropertyName Number     -NotePropertyValue $PolicyNumber
 
     foreach ($Item in $Group.Items)
     {
@@ -883,6 +1026,7 @@ foreach ($Group in $OrderedGroups)
     [void]$PolicyPlan.Add(
         [PSCustomObject][ordered]@{
             PolicyName          = $PolicyName
+            Worksheet           = $SheetName
             Tier                = $Tier
             SourceCount         = $Sources.Count
             $SourceLabel        = $Sources -join '; '
@@ -905,56 +1049,58 @@ foreach ($Group in $OrderedGroups)
 # WinningGPO exists only in HTML output.
 $HasWinningGpo = ($CandidateRows.Count -gt 0) -and ($null -ne $CandidateRows[0].PSObject.Properties['WinningGPO'])
 
-$PolicySettingsRows =
-    @(
-        $PlacedSettings |
-        Sort-Object PolicyName, Extension, Category, SettingName |
-        ForEach-Object {
-            $Out = [ordered]@{
-                PolicyName    = $_.PolicyName
-                $SourceColumn = $_.Sources -join '; '
-                Class         = $_.Class
-                SettingName   = $_.SettingName
-                Value         = $_.Value
-            }
-
-            if ($HasWinningGpo)
-            {
-                $Out.WinningGPO = $_.WinningGPO
-            }
-
-            $Out.IntuneType    = $_.IntuneType
-            $Out.IntuneSetting = $_.IntuneSetting
-            $Out.MappingStatus = $_.MappingStatus
-            $Out.Confidence    = $_.Confidence
-
-            [PSCustomObject]$Out
-        }
+function Get-PolicySheetRows
+{
+    param(
+        [Parameter(Mandatory)]
+        [object]$Group
     )
 
-$FirewallRuleRows =
-    @(
-        $PlacedRules |
-        Sort-Object PolicyName |
-        ForEach-Object {
-            $Rule = $_.Rule
-            $Out  = [ordered]@{
-                PolicyName   = $_.PolicyName
-                $SourceLabel = $_.Sources -join '; '
-                Conflict     = if ($_.IsConflict) { 'Yes' } else { 'No' }
-            }
+    # The rows of one policy's worksheet. Settings: only the columns needed
+    # to build the Intune policy. Firewall rules: the rule fields.
+    $Settings = @($Group.Items | Where-Object { $null -eq $_.PSObject.Properties['Rule'] })
+    $Rules    = @($Group.Items | Where-Object { $null -ne $_.PSObject.Properties['Rule'] })
 
-            foreach ($Property in $Rule.PSObject.Properties)
-            {
-                if ($FirewallIgnore -notcontains $Property.Name)
-                {
-                    $Out[$Property.Name] = $Property.Value
-                }
-            }
-
-            [PSCustomObject]$Out
+    foreach ($Item in @($Settings | Sort-Object Extension, Category, SettingName))
+    {
+        $Out = [ordered]@{
+            $SourceColumn = $Item.Sources -join '; '
+            Class         = $Item.Class
+            SettingName   = $Item.SettingName
+            Value         = $Item.Value
         }
-    )
+
+        if ($HasWinningGpo)
+        {
+            $Out.WinningGPO = $Item.WinningGPO
+        }
+
+        $Out.IntuneType    = $Item.IntuneType
+        $Out.IntuneSetting = $Item.IntuneSetting
+        $Out.MappingStatus = $Item.MappingStatus
+        $Out.Confidence    = $Item.Confidence
+
+        [PSCustomObject]$Out
+    }
+
+    foreach ($Item in @($Rules | Sort-Object { Get-PropertyValue $_.Rule @('Name') }))
+    {
+        $Out = [ordered]@{
+            $SourceColumn = $Item.Sources -join '; '
+            Conflict      = if ($Item.IsConflict) { 'Yes' } else { 'No' }
+        }
+
+        foreach ($Property in $Item.Rule.PSObject.Properties)
+        {
+            if ($FirewallIgnore -notcontains $Property.Name)
+            {
+                $Out[$Property.Name] = $Property.Value
+            }
+        }
+
+        [PSCustomObject]$Out
+    }
+}
 
 $ConflictRows =
     @(
@@ -1011,12 +1157,12 @@ $SummaryRows = @(
     [PSCustomObject]@{ Item = 'Created';                      Value = (Get-Date).ToString(); Worksheet = '' }
     [PSCustomObject]@{ Item = "Input";                        Value = $(if ($script:InputMode -eq 'Csv') { "CSV files ($(if ($script:InputPrefix) { $script:InputPrefix } else { 'no prefix' }))" } else { [System.IO.Path]::GetFileName($script:InputWorkbook) }); Worksheet = '' }
     [PSCustomObject]@{ Item = $SourceLabel;                   Value = $AllSources.Count; Worksheet = '' }
-    [PSCustomObject]@{ Item = 'Proposed Intune policies';     Value = $PolicyPlan.Count; Worksheet = 'PolicyPlan' }
-    [PSCustomObject]@{ Item = '  Baseline policies';          Value = @($PolicyPlan | Where-Object { $_.Tier -eq 'Baseline' }).Count; Worksheet = 'PolicyPlan' }
-    [PSCustomObject]@{ Item = '  Shared policies';            Value = @($PolicyPlan | Where-Object { $_.Tier -eq 'Shared' }).Count; Worksheet = 'PolicyPlan' }
-    [PSCustomObject]@{ Item = '  Single-GPO policies';        Value = @($PolicyPlan | Where-Object { $_.Tier -eq 'Single' }).Count; Worksheet = 'PolicyPlan' }
-    [PSCustomObject]@{ Item = 'Settings placed in policies';  Value = $PolicySettingsRows.Count; Worksheet = 'PolicySettings' }
-    [PSCustomObject]@{ Item = 'Firewall rules placed';        Value = $FirewallRuleRows.Count; Worksheet = 'FirewallRules' }
+    [PSCustomObject]@{ Item = 'Proposed Intune policies';     Value = $PolicyPlan.Count; Worksheet = '#Plan' }
+    [PSCustomObject]@{ Item = '  Baseline policies';          Value = @($PolicyPlan | Where-Object { $_.Tier -eq 'Baseline' }).Count; Worksheet = '#Plan' }
+    [PSCustomObject]@{ Item = '  Shared policies';            Value = @($PolicyPlan | Where-Object { $_.Tier -eq 'Shared' }).Count; Worksheet = '#Plan' }
+    [PSCustomObject]@{ Item = '  Single-GPO policies';        Value = @($PolicyPlan | Where-Object { $_.Tier -eq 'Single' }).Count; Worksheet = '#Plan' }
+    [PSCustomObject]@{ Item = 'Settings placed in policies';  Value = $PlacedSettings.Count; Worksheet = '' }
+    [PSCustomObject]@{ Item = 'Firewall rules placed';        Value = $PlacedRules.Count; Worksheet = '' }
     [PSCustomObject]@{ Item = 'Conflicting settings';         Value = $ConflictSettingCount; Worksheet = 'Conflicts' }
     [PSCustomObject]@{ Item = 'Conflicting firewall rules';   Value = $ConflictRuleCount; Worksheet = 'Conflicts' }
     [PSCustomObject]@{ Item = 'Settings not migrated';        Value = $NotMigratedRows.Count; Worksheet = 'NotMigrated' }
@@ -1042,12 +1188,22 @@ if (Test-Path -LiteralPath $WorkbookPath)
     }
 }
 
-Write-SummarySheet -Path $WorkbookPath -Rows $SummaryRows
-Write-PlanSheet    -Path $WorkbookPath -Name 'PolicyPlan'     -Rows @($PolicyPlan)
-Write-PlanSheet    -Path $WorkbookPath -Name 'PolicySettings' -Rows $PolicySettingsRows
-Write-PlanSheet    -Path $WorkbookPath -Name 'FirewallRules'  -Rows $FirewallRuleRows
-Write-PlanSheet    -Path $WorkbookPath -Name 'Conflicts'      -Rows $ConflictRows
-Write-PlanSheet    -Path $WorkbookPath -Name 'NotMigrated'    -Rows $NotMigratedRows
+# Summary (counts and the policy plan), one worksheet per policy in plan
+# order, then Conflicts and NotMigrated.
+Write-SummarySheet -Path $WorkbookPath -Rows $SummaryRows -PlanRows @($PolicyPlan)
+
+foreach ($Group in $OrderedGroups)
+{
+    Write-PlanSheet `
+        -Path $WorkbookPath `
+        -Name $Group.SheetName `
+        -Title $Group.PolicyName `
+        -TableName "Policy$($Group.Number)Table" `
+        -Rows @(Get-PolicySheetRows -Group $Group)
+}
+
+Write-PlanSheet -Path $WorkbookPath -Name 'Conflicts'   -Rows $ConflictRows
+Write-PlanSheet -Path $WorkbookPath -Name 'NotMigrated' -Rows $NotMigratedRows
 
 if ($script:TruncatedCells -gt 0)
 {
