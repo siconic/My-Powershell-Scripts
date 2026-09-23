@@ -86,7 +86,9 @@ IntuneMigrationCandidates.csv
     NoIntuneEquivalent, IntuneType = the workbook's Intune Setting,
     IntuneSetting = its Intune Sub Setting, Notes = its remarks. Other
     settings use the general rules in the Intune mapping file. MappingSource
-    shows which file and workbook each mapping came from.
+    shows which file and workbook each mapping came from. With exclusions
+    (-ApplyExclusions or answering Y), settings matched by an enabled entry
+    of IntuneMigrationExclusions.json are left out.
 
 UnclassifiedSettings.csv
     Table shapes this parser does not recognize, and rows with no setting
@@ -149,6 +151,23 @@ first (MappingStatus Mapped or NoIntuneEquivalent, Confidence High); other
 settings use the general rules. The default file is scrubbed and has no
 remarks; to see remarks and unredacted names internally, import with
 -KeepSensitiveData and pass IntunePolicyMappings.Internal.json here.
+
+.PARAMETER ApplyExclusions
+Leave the settings matched by the enabled entries of the exclusion file
+out of IntuneMigrationCandidates. If this parameter is not given, the
+script asks (Y = yes; press Enter for no). -ApplyExclusions:$false skips
+the question and uses no exclusions. In a session that cannot ask (for
+example -NonInteractive), no exclusions are used. Excluded settings stay
+in ParsedSettings and the comparison reports; RunStatistics shows how many
+were excluded (ExcludedFromMigration).
+
+.PARAMETER ExclusionPath
+Path to the exclusion file. Default: IntuneMigrationExclusions.json next
+to this script. Each entry has a name, "enabled" (true or false, to turn
+the entry on or off), a class (* = any, Computer, User) and wildcard
+patterns matched against "Extension / Category / SettingName" (case
+ignored). If the file is missing, a warning is shown and nothing is
+excluded.
 
 .PARAMETER FilePrefix
 Text added to the start of every output file name, followed by a hyphen.
@@ -215,6 +234,11 @@ Changelog:
         Import-IntuneMappingWorkbook.ps1 builds from manual mapping
         workbooks; IntuneMigrationCandidates has a new MappingSource
         column and RunStatistics a MappedFromWorkbooks count.
+        Optional exclusions (question, or -ApplyExclusions): settings
+        matched by an enabled entry of IntuneMigrationExclusions.json
+        (firewall, registry, public key policies, ...; each entry can be
+        turned on or off) are left out of IntuneMigrationCandidates;
+        RunStatistics has an ExcludedFromMigration count.
         No module changes; the module version is kept in lockstep.
   1.10 - New -FilePrefix parameter. The prefix and a hyphen are added to
          the start of every output file name (LS-CommonSettings.csv). If
@@ -312,10 +336,14 @@ param(
 
     [string]$PolicyMappingPath = (Join-Path $PSScriptRoot "IntunePolicyMappings.json"),
 
+    [string]$ExclusionPath = (Join-Path $PSScriptRoot "IntuneMigrationExclusions.json"),
+
     [string]$FilePrefix,
 
     [ValidateSet('CSV', 'Excel')]
-    [string]$OutputFormat
+    [string]$OutputFormat,
+
+    [switch]$ApplyExclusions
 )
 
 $ErrorActionPreference = "Stop"
@@ -542,6 +570,33 @@ if ($ExcelOutput)
 else
 {
     Write-Host "Output format: CSV files"
+}
+
+# ------------------------------------------------------------
+# Intune migration exclusions (question)
+# ------------------------------------------------------------
+
+# When -ApplyExclusions is not given, ask. An empty answer means no. In a
+# non-interactive session Read-Host fails, and no exclusions are used. The
+# exclusion file is read later, before IntuneMigrationCandidates is built.
+if ($PSBoundParameters.ContainsKey('ApplyExclusions'))
+{
+    $UseExclusions = [bool]$ApplyExclusions
+}
+else
+{
+    $Answer = ""
+
+    try
+    {
+        $Answer = Read-Host "Exclude settings from IntuneMigrationCandidates using $([System.IO.Path]::GetFileName($ExclusionPath))? Y = yes. Press Enter for no"
+    }
+    catch
+    {
+        $Answer = ""
+    }
+
+    $UseExclusions = "$($Answer)".Trim() -match '^(?i)(y|yes)$'
 }
 
 # Reports collected by Export-Report for the Excel workbook.
@@ -1085,6 +1140,96 @@ function Get-IntunePolicyMapping
     }
 }
 
+function Import-MigrationExclusions
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    # Returns the enabled entries of the exclusion file (name, class,
+    # patterns), or none when the file is missing.
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf))
+    {
+        Write-Warning "Exclusion file not found: $Path - no settings are excluded."
+        return @()
+    }
+
+    try
+    {
+        $Document =
+            Get-Content -LiteralPath $Path -Raw -Encoding UTF8 -ErrorAction Stop |
+            ConvertFrom-Json -ErrorAction Stop
+    }
+    catch
+    {
+        throw "Failed to load exclusion file '$Path': $($_.Exception.Message)"
+    }
+
+    $Enabled = [System.Collections.ArrayList]::new()
+
+    foreach ($Entry in @($Document.exclusions))
+    {
+        if (($null -eq $Entry) -or ("$($Entry.enabled)" -ine 'true'))
+        {
+            continue
+        }
+
+        $Patterns = @($Entry.patterns | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+        if ($Patterns.Count -eq 0)
+        {
+            Write-Warning "Exclusion '$($Entry.name)' has no patterns and is ignored."
+            continue
+        }
+
+        [void]$Enabled.Add(
+            [PSCustomObject]@{
+                Name     = "$($Entry.name)"
+                Class    = if ([string]::IsNullOrWhiteSpace($Entry.class)) { '*' } else { "$($Entry.class)" }
+                Patterns = $Patterns
+            }
+        )
+    }
+
+    return $Enabled
+}
+
+function Get-MigrationExclusion
+{
+    param(
+        [Parameter(Mandatory)]
+        [object]$Setting,
+
+        [AllowNull()]
+        [object[]]$Exclusions
+    )
+
+    # The name of the first enabled exclusion that matches the setting, or
+    # $null. Patterns are matched with -like (wildcards, case ignored)
+    # against "Extension / Category / SettingName".
+    $Text = "$($Setting.Extension) / $($Setting.Category) / $($Setting.SettingName)"
+
+    foreach ($Exclusion in @($Exclusions))
+    {
+        if (($Exclusion.Class -ne '*') -and ("$($Setting.Class)" -ne $Exclusion.Class))
+        {
+            continue
+        }
+
+        foreach ($Pattern in $Exclusion.Patterns)
+        {
+            if ($Text -like $Pattern)
+            {
+                return $Exclusion.Name
+            }
+        }
+    }
+
+    return $null
+}
+
 function Import-IntuneMapping
 {
     [CmdletBinding()]
@@ -1230,6 +1375,18 @@ $PolicyMappingFileName = [System.IO.Path]::GetFileName($PolicyMappingPath)
 $PolicyMappingIndex =
     Import-IntunePolicyMapping `
         -Path $PolicyMappingPath
+
+$MigrationExclusions = @()
+
+if ($UseExclusions)
+{
+    $MigrationExclusions = @(Import-MigrationExclusions -Path $ExclusionPath)
+    Write-Host "Intune migration exclusions: $($MigrationExclusions.Count) enabled ($(@($MigrationExclusions | ForEach-Object { $_.Name }) -join ', '))"
+}
+else
+{
+    Write-Host "Intune migration exclusions: not used"
+}
 
 # ------------------------------------------------------------
 # Storage
@@ -1945,9 +2102,29 @@ foreach ($Key in $SortedNameKeys)
 # Migration Candidates + Intune Mapping
 # ------------------------------------------------------------
 
+# Exclusion name -> number of settings it left out.
+$ExcludedCounts = @{}
+
 $MigrationCandidates =
     foreach ($Setting in $AllSettings)
     {
+        # Settings matched by an enabled exclusion are left out.
+        $ExclusionName = Get-MigrationExclusion -Setting $Setting -Exclusions $MigrationExclusions
+
+        if ($null -ne $ExclusionName)
+        {
+            if ($ExcludedCounts.ContainsKey($ExclusionName))
+            {
+                $ExcludedCounts[$ExclusionName]++
+            }
+            else
+            {
+                $ExcludedCounts[$ExclusionName] = 1
+            }
+
+            continue
+        }
+
         $PolicyMatch = Get-IntunePolicyMapping -Setting $Setting -Index $PolicyMappingIndex -NameAliases $PolicyNameAliases
         $Map         = $null
 
@@ -2082,6 +2259,14 @@ $UnmappedCount =
         Where-Object { $_.MappingStatus -in @('Unmapped', 'MappingFileMissing') }
     ).Count
 
+# Settings left out by the exclusion file.
+$ExcludedCount = 0
+
+foreach ($Count in $ExcludedCounts.Values)
+{
+    $ExcludedCount += $Count
+}
+
 # Settings mapped from the manual mapping workbooks (the policy mapping file).
 $WorkbookMappedCount =
     @(
@@ -2117,6 +2302,7 @@ $Statistics =
         IntuneMigrationCandidates = @($MigrationCandidates).Count
         FirewallDiagnostics       = @($FirewallDiagnostics).Count
         MappedFromWorkbooks       = $WorkbookMappedCount
+        ExcludedFromMigration     = $ExcludedCount
     }
 
 # ------------------------------------------------------------
@@ -2184,6 +2370,11 @@ if ($Failures.Count -gt 0)
 if ($AllUnclassified.Count -gt 0)
 {
     Write-Warning "$($AllUnclassified.Count) unclassified entries are not part of the comparison ($(Get-ReportLocation 'UnclassifiedSettings.csv')). This is normal for RSoP HTML reports - check the Reason and Category columns to see what was skipped."
+}
+
+if ($ExcludedCount -gt 0)
+{
+    Write-Host "$ExcludedCount setting(s) excluded from IntuneMigrationCandidates: $(@($ExcludedCounts.Keys | Sort-Object | ForEach-Object { "$($_) $($ExcludedCounts[$_])" }) -join ', ')"
 }
 
 Write-Host "Reports written to:"

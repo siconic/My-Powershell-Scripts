@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "1.0",
+  "description": "Settings to leave out of IntuneMigrationCandidates in Compare-GPOXml.ps1 and Compare-GPOHtml.ps1. Used only when the user answers Yes to the exclusion question or passes -ApplyExclusions. Set enabled to true or false to turn each entry on or off. A setting is excluded when an enabled entry's class matches (* = any, Computer, User) and any of its patterns matches the text 'Extension / Category / SettingName' (wildcards * and ?, case ignored). The XML script uses fixed extension names (Security, Administrative Templates, Advanced Audit Policy, Windows Firewall, Registry Settings, Local Users and Groups, NRPT); the HTML script uses the report's headings (Security Settings / Public Key Policies / ..., Administrative Templates / Network / ...). Excluded settings stay in ParsedSettings and the comparison reports.",
+  "exclusions": [
+    {
+      "name": "Firewall",
+      "enabled": true,
+      "class": "*",
+      "patterns": [ "*Firewall*" ],
+      "description": "Windows Firewall profile and global settings, and Windows Defender Firewall Administrative Template policies. Firewall rules are not in IntuneMigrationCandidates; they are in FirewallRules."
+    },
+    {
+      "name": "Registry",
+      "enabled": true,
+      "class": "*",
+      "patterns": [ "Registry Settings /*", "*Security Settings / Registry*", "Security / Registry*" ],
+      "description": "Registry preference items (XML: Registry Settings) and registry permissions (Security Settings > Registry)."
+    },
+    {
+      "name": "Public Key Policies",
+      "enabled": true,
+      "class": "*",
+      "patterns": [ "*Public Key Policies*" ],
+      "description": "Certificate and Encrypting File System settings under Security Settings > Public Key Policies."
+    },
+    {
+      "name": "File System",
+      "enabled": false,
+      "class": "*",
+      "patterns": [ "*Security Settings / File System*", "Security / File System*" ],
+      "description": "File and folder permissions under Security Settings > File System."
+    },
+    {
+      "name": "System Services",
+      "enabled": false,
+      "class": "*",
+      "patterns": [ "*System Services*", "*Service Permissions*" ],
+      "description": "Service startup modes and service permissions."
+    },
+    {
+      "name": "Local Users and Groups",
+      "enabled": false,
+      "class": "*",
+      "patterns": [ "*Local Users and Groups*", "*Restricted Groups*" ],
+      "description": "Local group membership from Group Policy Preferences and Restricted Groups."
+    },
+    {
+      "name": "Wireless Network Policies",
+      "enabled": false,
+      "class": "*",
+      "patterns": [ "*Wireless Network*" ],
+      "description": "Wireless Network (IEEE 802.11) Policies."
+    },
+    {
+      "name": "Internet Explorer Maintenance",
+      "enabled": false,
+      "class": "*",
+      "patterns": [ "*Internet Explorer Maintenance*" ],
+      "description": "Internet Explorer Maintenance (deprecated)."
+    },
+    {
+      "name": "Software Restriction Policies",
+      "enabled": false,
+      "class": "*",
+      "patterns": [ "*Software Restriction*" ],
+      "description": "Software Restriction Policies."
+    },
+    {
+      "name": "Advanced Audit Policy",
+      "enabled": false,
+      "class": "*",
+      "patterns": [ "Advanced Audit Policy*", "*Advanced Audit Policy Configuration*" ],
+      "description": "Advanced Audit Policy Configuration."
+    },
+    {
+      "name": "NRPT",
+      "enabled": false,
+      "class": "*",
+      "patterns": [ "NRPT /*", "*Name Resolution Policy*" ],
+      "description": "Name Resolution Policy Table rules."
+    }
+  ]
+}

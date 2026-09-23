@@ -40,7 +40,10 @@ did and didn't catch.
   "Access this computer from the network"). The table is written from the
   standard Windows names and has not been checked against real GPO XML
   exports. Tested with the lookup functions: `PasswordHistorySize` and
-  `SeNetworkLogonRight` found their workbook mappings.
+  `SeNetworkLogonRight` found their workbook mappings. Exclusions
+  (`IntuneMigrationExclusions.json`, question or `-ApplyExclusions`), the
+  same as HTML 2.0; for the XML script tested with the functions only
+  (XML naming: Windows Firewall, Registry Settings excluded).
 
 - **3.3** - New `-FilePrefix` parameter, the same as HTML 1.10. The prefix
   and a hyphen are added to the start of every output file name
@@ -159,6 +162,27 @@ did and didn't catch.
   entry with a remark and an alternate both gave the expected status,
   Intune columns, Notes, MappingSource (with the loaded file's name) and
   MappedFromWorkbooks count.
+  Exclusions: new `IntuneMigrationExclusions.json` next to the scripts, one
+  entry per area with `enabled` true/false, a class and wildcard patterns
+  matched against "Extension / Category / SettingName". Firewall,
+  Registry and Public Key Policies are enabled; File System, System
+  Services, Local Users and Groups, Wireless Network Policies, Internet
+  Explorer Maintenance, Software Restriction Policies, Advanced Audit
+  Policy and NRPT are included but disabled. The scripts ask "Exclude
+  settings from IntuneMigrationCandidates?" (Enter or no way to ask = no);
+  `-ApplyExclusions` / `-ApplyExclusions:$false` answer without asking,
+  `-ExclusionPath` points to another file. Matching settings are left out
+  of IntuneMigrationCandidates only (they stay in ParsedSettings and the
+  comparisons); RunStatistics has a new last value, ExcludedFromMigration,
+  and the console lists the count per entry. Tested with the functions
+  (XML and HTML naming for firewall, registry and public key policies
+  excluded; password policy, an ADMX policy named "...registry...", and a
+  disabled entry kept; enabled "false"/"true" and a class limit respected;
+  a missing file warns and excludes nothing) and in full HTML runs with a
+  test exclusion file: -ApplyExclusions and answer Y excluded the 3
+  matching settings (ParsedSettings still 3, UnmappedSettings 0);
+  -ApplyExclusions:$false, Enter and a non-interactive session excluded
+  nothing; the Excel output shows ExcludedFromMigration in RunStatistics.
 
 - **1.10** - New `-FilePrefix` parameter. The prefix and a hyphen are added
   to the start of every output file name (`LS-CommonSettings.csv`). A
@@ -349,6 +373,9 @@ did and didn't catch.
   `Security | * | *` fallback and treats Registry Settings as applying to
   any class. 1.2 adds the `Mapped` and `NoIntuneEquivalent` status
   definitions used for IntunePolicyMappings.json matches.
+- **IntuneMigrationExclusions.json** - schemaVersion 1.0. Exclusion
+  entries for IntuneMigrationCandidates: name, enabled, class, patterns,
+  description. Read by both compare scripts when exclusions are used.
 - **IntunePolicyMappings.json** - schemaVersion 1.0. Written by
   Import-IntuneMappingWorkbook.ps1; do not edit by hand (edit the
   workbook and import again with `-Rebuild`). One entry per policy:
