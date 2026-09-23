@@ -26,9 +26,13 @@
 # COM interop calls in particular should be treated as the highest-risk
 # part of this file until you run it.
 #
-# Version 1.8
+# Version 1.9
 #
 # Changelog:
+#   1.9 - The report title table (class "title") is skipped. Its
+#         "Data collected on: <date/time>" row was recorded as a setting
+#         (Class Unknown), so every comparison of reports taken at
+#         different times showed it as a unique or conflicting setting.
 #   1.8 - No changes to this module. Version kept in lockstep with
 #         Compare-GPOHtml.ps1 (firewall settings split into their own files).
 #   1.7 - Every row of a firewall rule table now goes to FirewallRules and
@@ -1857,6 +1861,16 @@ function Get-GPOSettingsFromHtml {
             try
             {
                 if (Test-IsNestedTable -Table $Table)
+                {
+                    continue
+                }
+
+                # The report title table (class "title") holds only the report
+                # header: "Group Policy Results", the computer or user name,
+                # and "Data collected on: <date/time>". It is not a settings
+                # table. Parsing it recorded the timestamp as a setting, which
+                # differs between any two reports taken at different times.
+                if (Test-ElementHasClass -Element $Table -ClassName 'title')
                 {
                     continue
                 }

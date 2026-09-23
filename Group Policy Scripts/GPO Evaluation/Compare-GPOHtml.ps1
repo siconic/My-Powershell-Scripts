@@ -125,7 +125,7 @@ no deprecated matches are reported.
 
 .NOTES
 Author:  Siconic
-Version: 1.8
+Version: 1.9
 
 Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
 schema (something that could break a workflow built on the old output).
@@ -133,6 +133,11 @@ MINOR bumps are bug fixes and additions that don't change existing columns
 or behavior. GPOCompareHtml.psm1 is versioned in lockstep with this script.
 
 Changelog:
+  1.9 - GPOCompareHtml.psm1: the report title table is skipped. Its
+        "Data collected on: <date/time>" row was recorded as a setting, so
+        reports taken at different times always showed it as a unique or
+        conflicting setting. No changes to this script; the version is
+        kept in lockstep.
   1.8 - Firewall profile settings (Domain / Private / Public), firewall
         global settings, and Windows Defender Firewall Administrative
         Template policies are removed from the settings comparison files

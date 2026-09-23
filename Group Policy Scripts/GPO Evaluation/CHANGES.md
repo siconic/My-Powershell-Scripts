@@ -39,8 +39,17 @@ did and didn't catch.
   mapping and deprecated-policy matching added; module path, encoding, and
   `-LiteralPath` fixes; duplicate/dead function definitions removed.
 
-## HTML toolset (Compare-GPOHtml.ps1 + GPOCompareHtml.psm1) - current: 1.8
+## HTML toolset (Compare-GPOHtml.ps1 + GPOCompareHtml.psm1) - current: 1.9
 
+- **1.9** - The report title table (`<table class="title">`) is skipped.
+  Its "Data collected on: <date/time>" row was recorded as a setting with
+  Class `Unknown`, so any two reports taken at different times showed it
+  as a unique or conflicting setting. Run in Windows PowerShell 5.1 against
+  two user-scope `gpresult /h` reports taken 93 minutes apart on a
+  non-domain PC: with 1.8, `UniqueSettings.csv` listed both timestamps;
+  with 1.9, no output file contains the timestamp. Those reports had no
+  other settings, so the effect on reports with real policy settings has
+  not been tested yet.
 - **1.8** - Firewall profile, global and Windows Defender Firewall ADMX
   settings moved out of the settings comparison files into
   `FirewallSettingsCommon.csv` and `FirewallSettingsUnique.csv`. They stay
