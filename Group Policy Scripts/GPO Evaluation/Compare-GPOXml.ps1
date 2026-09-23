@@ -62,13 +62,19 @@ ParserFailures.csv
     the GPO total.
 
 RunStatistics.csv
-    Counts for the run.
+    Counts for the run. Every other report has a count here that equals its
+    number of rows (for example Conflicts for ConflictingSettings.csv).
 
 GPOCompareXml.xlsx (only with -OutputFormat Excel)
-    One workbook with one worksheet per report above, written instead of the
-    CSV files. RunStatistics is the first worksheet, shown as a Statistic /
-    Value table with a blue header; the other worksheets follow in the order
-    above. Every value is stored as text, as in the CSV files.
+    One workbook, written instead of the CSV files, with one worksheet per
+    report in this order: RunStatistics, CommonSettings, UniqueSettings,
+    DeprecatedPolicies, FirewallRules, IntuneMigrationCandidates,
+    DuplicateSettings, ConflictingSettings, ParsedSettings, then the others.
+    Every worksheet is an Excel table with a blue header (table style
+    Medium2) and a frozen header row. RunStatistics is shown as a
+    Statistic / Value table; each statistic that counts a worksheet's rows
+    is a link to that worksheet. Text values are stored exactly as text;
+    counts are numbers and True/False values are Excel TRUE/FALSE.
 
 .PARAMETER XmlFolder
 Folder containing XML exports (Get-GPOReport -ReportType Xml).
@@ -136,8 +142,15 @@ Changelog:
   4.0 - Excel output. New -OutputFormat parameter (CSV or Excel); if it
         is not given, the script asks. Excel writes one workbook,
         GPOCompareXml.xlsx, with one worksheet per report and no CSV
-        files. RunStatistics is the first worksheet, shown as a
-        Statistic / Value table with a blue header. If the ImportExcel
+        files. Worksheet order: RunStatistics, CommonSettings,
+        UniqueSettings, DeprecatedPolicies, FirewallRules,
+        IntuneMigrationCandidates, DuplicateSettings, ConflictingSettings,
+        ParsedSettings, then the others. Every worksheet is a blue
+        (Medium2) Excel table. RunStatistics is a Statistic / Value table
+        whose statistics link to their worksheets. RunStatistics.csv has
+        new columns at the end (MissingSettingsMatrix,
+        IntuneMigrationCandidates), so every report has
+        a count. If the ImportExcel
         module is missing, the script installs it for the current user;
         if that fails, or the workbook cannot be written, the output is
         CSV files. No module changes; the module version is kept in
@@ -199,22 +212,41 @@ $ErrorActionPreference = "Stop"
 # Separator used when building comparison keys. It cannot occur in setting text.
 $Sep = [string][char]0x1F
 
-# Every report this script writes, in this order.
+# Every report this script writes. The Excel workbook uses this order for
+# its worksheets.
 $ExpectedReports = @(
-    "ParsedSettings.csv"
+    "RunStatistics.csv"
     "CommonSettings.csv"
-    "CommonSettingsByName.csv"
     "UniqueSettings.csv"
-    "ConflictingSettings.csv"
-    "DuplicateSettings.csv"
     "DeprecatedPolicies.csv"
-    "MissingSettingsMatrix.csv"
     "FirewallRules.csv"
     "IntuneMigrationCandidates.csv"
+    "DuplicateSettings.csv"
+    "ConflictingSettings.csv"
+    "ParsedSettings.csv"
+    "CommonSettingsByName.csv"
+    "MissingSettingsMatrix.csv"
     "UnclassifiedSettings.csv"
     "ParserFailures.csv"
-    "RunStatistics.csv"
 )
+
+# RunStatistics value -> the worksheet whose rows it counts. In the Excel
+# workbook, these statistics are links to their worksheet. Every worksheet
+# except RunStatistics has one.
+$StatisticWorksheets = @{
+    Settings                  = "ParsedSettings"
+    FirewallRules             = "FirewallRules"
+    CommonSettings            = "CommonSettings"
+    CommonByName              = "CommonSettingsByName"
+    UniqueSettings            = "UniqueSettings"
+    Conflicts                 = "ConflictingSettings"
+    Duplicates                = "DuplicateSettings"
+    Deprecated                = "DeprecatedPolicies"
+    Unclassified              = "UnclassifiedSettings"
+    ParseFailures             = "ParserFailures"
+    MissingSettingsMatrix     = "MissingSettingsMatrix"
+    IntuneMigrationCandidates = "IntuneMigrationCandidates"
+}
 
 # ------------------------------------------------------------
 # Validation
@@ -475,15 +507,13 @@ function Get-ReportLocation
 
 function Save-ExcelOutput
 {
-    # Writes the reports collected by Export-Report to the Excel workbook:
-    # RunStatistics first, then the others in $ExpectedReports order. After
-    # an early stop, only the reports collected so far are included. If the
-    # workbook cannot be written, the same reports are written as CSV files
-    # instead.
+    # Writes the reports collected by Export-Report to the Excel workbook,
+    # with the worksheets in $ExpectedReports order. After an early stop,
+    # only the reports collected so far are included. If the workbook
+    # cannot be written, the same reports are written as CSV files instead.
     $OrderedSheets = [System.Collections.ArrayList]::new()
-    $SheetOrder    = @('RunStatistics.csv') + @($ExpectedReports | Where-Object { $_ -ne 'RunStatistics.csv' })
 
-    foreach ($Report in $SheetOrder)
+    foreach ($Report in $ExpectedReports)
     {
         $SheetName = [System.IO.Path]::GetFileNameWithoutExtension($Report)
 
@@ -605,7 +635,12 @@ function Export-RunStatisticsSheet
         [string]$Path,
 
         [AllowNull()]
-        [object[]]$Rows
+        [object[]]$Rows,
+
+        # Names of the worksheets in the workbook. A statistic is a link only
+        # when its worksheet is one of these.
+        [AllowNull()]
+        [string[]]$WorksheetNames
     )
 
     # RunStatistics.csv is one row with one column per count. In the
@@ -642,6 +677,27 @@ function Export-RunStatisticsSheet
     $Worksheet = $Package.Workbook.Worksheets['RunStatistics']
     $Worksheet.Column(2).Style.HorizontalAlignment = [OfficeOpenXml.Style.ExcelHorizontalAlignment]::Left
 
+    # Make each statistic that counts a worksheet's rows a link to that
+    # worksheet. Row 1 is the title, row 2 the table header, so the first
+    # statistic is on row 3.
+    $RowNumber = 2
+
+    foreach ($TableRow in $TableRows)
+    {
+        $RowNumber++
+        $Target = $StatisticWorksheets[$TableRow.Statistic]
+
+        if (($null -eq $Target) -or (@($WorksheetNames) -notcontains $Target))
+        {
+            continue
+        }
+
+        $Cell           = $Worksheet.Cells[$RowNumber, 1]
+        $Cell.Hyperlink = [OfficeOpenXml.ExcelHyperLink]::new("'$($Target)'!A1", $TableRow.Statistic)
+        $Cell.Style.Font.UnderLine = $true
+        $Cell.Style.Font.Color.SetColor([System.Drawing.Color]::FromArgb(5, 99, 193))
+    }
+
     Close-ExcelPackage -ExcelPackage $Package
 }
 
@@ -668,7 +724,7 @@ function Export-ExcelWorkbook
     {
         if (($Sheet.Name -eq 'RunStatistics') -and (@($Sheet.Rows).Count -gt 0))
         {
-            Export-RunStatisticsSheet -Path $Path -Rows @($Sheet.Rows)
+            Export-RunStatisticsSheet -Path $Path -Rows @($Sheet.Rows) -WorksheetNames @(@($Sheets) | ForEach-Object { $_.Name })
             continue
         }
 
@@ -687,10 +743,12 @@ function Export-ExcelWorkbook
             $TotalTruncated += $Converted.Truncated
         }
 
+        # Every worksheet is an Excel table with the same blue style as the
+        # RunStatistics worksheet. A table has its own filter buttons.
         # -NoNumberConversion and -NoHyperLinkConversion keep every value as
         # text, as in the CSV files.
         $Package = $SheetRows |
-            Export-Excel -Path $Path -WorksheetName $Sheet.Name -AutoFilter -FreezeTopRow -BoldTopRow -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
+            Export-Excel -Path $Path -WorksheetName $Sheet.Name -TableName "$($Sheet.Name)Table" -TableStyle Medium2 -FreezeTopRow -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
 
         # Write text that starts with "=" back as plain text instead of a
         # formula.
@@ -1347,6 +1405,8 @@ $Statistics =
         UnmappedSettings  = $UnmappedCount
         Unclassified      = $AllUnclassified.Count
         ParseFailures     = $Failures.Count
+        MissingSettingsMatrix     = @($Matrix).Count
+        IntuneMigrationCandidates = @($MigrationCandidates).Count
     }
 
 # ------------------------------------------------------------

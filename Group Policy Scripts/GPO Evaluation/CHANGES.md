@@ -26,8 +26,12 @@ did and didn't catch.
   module changes. Run in Windows PowerShell 5.1: the workbook functions
   with test rows (see HTML 2.0), and `-OutputFormat Excel` with one invalid
   XML file, which wrote a workbook with the 4 worksheets collected before
-  the "No settings were parsed" stop. A full XML run has not been tested,
-  because no GPO XML exports were available.
+  the "No settings were parsed" stop. Same workbook layout as HTML 2.0
+  (worksheet order, blue tables, RunStatistics links); `RunStatistics.csv`
+  has two new columns at the end (`MissingSettingsMatrix`,
+  `IntuneMigrationCandidates`). The XML workbook functions were run with
+  test rows: the statistics linked to the worksheets present. A full XML
+  run has not been tested, because no GPO XML exports were available.
 
 - **3.3** - New `-FilePrefix` parameter, the same as HTML 1.10. The prefix
   and a hyphen are added to the start of every output file name
@@ -99,6 +103,21 @@ did and didn't catch.
   shown, then "could not be installed. Output will continue as CSV files."
   and 18 CSV files. A successful install by the script has not been
   tested, because ImportExcel was already installed on the test PC.
+  Workbook layout: worksheets in the order RunStatistics, CommonSettings,
+  UniqueSettings, DeprecatedPolicies, FirewallRules,
+  IntuneMigrationCandidates, DuplicateSettings, ConflictingSettings,
+  ParsedSettings, then the others. Every worksheet is an Excel table in
+  the blue Medium2 style with a frozen header row. In RunStatistics, each
+  statistic that counts a worksheet's rows is a link to that worksheet
+  (`Settings` -> ParsedSettings, `Conflicts` -> ConflictingSettings, and
+  so on). `RunStatistics.csv` has three new columns at the end
+  (`MissingSettingsMatrix`, `IntuneMigrationCandidates`,
+  `FirewallDiagnostics`) so that every report has a count. Tested in Excel
+  with three reports, one named `Test [1] #A`: the worksheet order was as
+  listed, all 18 worksheets were Medium2 tables, the matrix header showed
+  `Test [1] #A` correctly, every worksheet had a linked statistic whose
+  value equaled its row count, and following the `Conflicts` link opened
+  ConflictingSettings.
 
 - **1.10** - New `-FilePrefix` parameter. The prefix and a hyphen are added
   to the start of every output file name (`LS-CommonSettings.csv`). A
