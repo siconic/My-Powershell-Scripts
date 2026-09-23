@@ -30,7 +30,8 @@ did and didn't catch.
   (worksheet order, blue tables, RunStatistics links); `RunStatistics.csv`
   has two new columns at the end (`MissingSettingsMatrix`,
   `IntuneMigrationCandidates`). The XML workbook functions were run with
-  test rows: the statistics linked to the worksheets present. A full XML
+  test rows: the statistics linked to the worksheets present and were
+  listed in worksheet order, with UnmappedSettings linked. A full XML
   run has not been tested, because no GPO XML exports were available.
 
 - **3.3** - New `-FilePrefix` parameter, the same as HTML 1.10. The prefix
@@ -74,8 +75,8 @@ did and didn't catch.
   per report, and no CSV files. RunStatistics is the first worksheet,
   shown as a two-column Statistic / Value table with a title and Excel's
   blue Medium2 table style (`RunStatistics.csv` keeps its one-row layout).
-  The other worksheets follow in the report-list order, with a bold,
-  filtered and frozen header row. A report with no rows gets a worksheet
+  (Worksheet order and table style: see "Workbook layout" below.) A
+  report with no rows gets a worksheet
   that says "No rows". Uses the ImportExcel module (tested with 7.8.10);
   Excel is not needed. If the module is missing, the script installs it
   for the current user from the PowerShell Gallery (with the NuGet
@@ -83,10 +84,11 @@ did and didn't catch.
   output is CSV files. If the "No settings were parsed" stop happens, the
   workbook is still written with the worksheets collected so far. If the
   workbook cannot be written (for example, it is open in Excel), the
-  reports are written as CSV files instead. Every value is kept as text:
-  `-NoNumberConversion` and `-NoHyperLinkConversion` stop number and link
-  conversion, and text starting with `=` (which Export-Excel always writes
-  as a formula) is written back as plain text. Values longer than 32767
+  reports are written as CSV files instead. Text values are kept exactly
+  as text: `-NoNumberConversion` and `-NoHyperLinkConversion` stop number
+  and link conversion, and text starting with `=` (which Export-Excel
+  always writes as a formula) is written back as plain text. Counts are
+  Excel numbers and True/False values are Excel TRUE/FALSE. Values longer than 32767
   characters are cut to that length in the workbook only, with a warning.
   No module changes. Run in Windows PowerShell 5.1: a full run wrote all 18
   worksheets; test rows with `=SUM(A1:A2)`, a URL, `0001`, `1-2` and a
@@ -117,7 +119,12 @@ did and didn't catch.
   listed, all 18 worksheets were Medium2 tables, the matrix header showed
   `Test [1] #A` correctly, every worksheet had a linked statistic whose
   value equaled its row count, and following the `Conflicts` link opened
-  ConflictingSettings.
+  ConflictingSettings. The RunStatistics worksheet lists the statistics in
+  worksheet order (general values such as Timestamp first), and
+  `UnmappedSettings` links to IntuneMigrationCandidates; its value is the
+  number of rows there with MappingStatus `Unmapped` (checked in Excel: 3
+  and 3; following the link opened IntuneMigrationCandidates).
+  `RunStatistics.csv` keeps its column order.
 
 - **1.10** - New `-FilePrefix` parameter. The prefix and a hyphen are added
   to the start of every output file name (`LS-CommonSettings.csv`). A

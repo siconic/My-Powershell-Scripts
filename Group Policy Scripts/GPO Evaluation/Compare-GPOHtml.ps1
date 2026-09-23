@@ -109,8 +109,9 @@ GPOCompareHtml.xlsx (only with -OutputFormat Excel)
     DuplicateSettings, ConflictingSettings, ParsedSettings, then the others.
     Every worksheet is an Excel table with a blue header (table style
     Medium2) and a frozen header row. RunStatistics is shown as a
-    Statistic / Value table; each statistic that counts a worksheet's rows
-    is a link to that worksheet. Text values are stored exactly as text;
+    Statistic / Value table in the same order as the worksheets; each
+    statistic that belongs to a worksheet is a link to it (UnmappedSettings
+    links to IntuneMigrationCandidates). Text values are stored exactly as text;
     counts are numbers and True/False values are Excel TRUE/FALSE.
 
 .PARAMETER HtmlFolder
@@ -184,7 +185,9 @@ Changelog:
         IntuneMigrationCandidates, DuplicateSettings, ConflictingSettings,
         ParsedSettings, then the others. Every worksheet is a blue
         (Medium2) Excel table. RunStatistics is a Statistic / Value table
-        whose statistics link to their worksheets. RunStatistics.csv has
+        in worksheet order whose statistics link to their worksheets
+        (UnmappedSettings to IntuneMigrationCandidates). RunStatistics.csv
+        keeps its column order and has
         new columns at the end (MissingSettingsMatrix,
         IntuneMigrationCandidates, FirewallDiagnostics), so every report has
         a count. If the ImportExcel
@@ -319,27 +322,31 @@ $ExpectedReports = @(
     "ParserFailures.csv"
 )
 
-# RunStatistics value -> the worksheet whose rows it counts. In the Excel
-# workbook, these statistics are links to their worksheet. Every worksheet
-# except RunStatistics has one.
-$StatisticWorksheets = @{
-    Settings                  = "ParsedSettings"
+# RunStatistics value -> the worksheet it belongs to. In the Excel
+# workbook, these statistics are links to their worksheet, and the
+# RunStatistics rows are shown in this order, which follows the worksheet
+# order above. Every worksheet except RunStatistics has a statistic whose
+# value is its number of rows. UnmappedSettings is the number of rows on
+# IntuneMigrationCandidates with MappingStatus Unmapped.
+$StatisticWorksheets = [ordered]@{
+    CommonSettings            = "CommonSettings"
+    UniqueSettings            = "UniqueSettings"
+    Deprecated                = "DeprecatedPolicies"
     FirewallRules             = "FirewallRules"
+    IntuneMigrationCandidates = "IntuneMigrationCandidates"
+    UnmappedSettings          = "IntuneMigrationCandidates"
+    Duplicates                = "DuplicateSettings"
+    Conflicts                 = "ConflictingSettings"
+    Settings                  = "ParsedSettings"
+    CommonByName              = "CommonSettingsByName"
+    MissingSettingsMatrix     = "MissingSettingsMatrix"
     FirewallCommon            = "FirewallRulesCommon"
     FirewallUnique            = "FirewallRulesUnique"
     FirewallSettingsCommon    = "FirewallSettingsCommon"
     FirewallSettingsUnique    = "FirewallSettingsUnique"
-    CommonSettings            = "CommonSettings"
-    CommonByName              = "CommonSettingsByName"
-    UniqueSettings            = "UniqueSettings"
-    Conflicts                 = "ConflictingSettings"
-    Duplicates                = "DuplicateSettings"
-    Deprecated                = "DeprecatedPolicies"
+    FirewallDiagnostics       = "FirewallDiagnostics"
     Unclassified              = "UnclassifiedSettings"
     ParseFailures             = "ParserFailures"
-    MissingSettingsMatrix     = "MissingSettingsMatrix"
-    IntuneMigrationCandidates = "IntuneMigrationCandidates"
-    FirewallDiagnostics       = "FirewallDiagnostics"
 }
 
 # ------------------------------------------------------------
@@ -764,6 +771,29 @@ function Export-RunStatisticsSheet
         }
     }
 
+    # Row order: statistics without a worksheet (Timestamp, file counts)
+    # first, in their original order, then the others in the order of
+    # $StatisticWorksheets, which follows the worksheet order.
+    $OrderedRows = [System.Collections.ArrayList]::new()
+
+    foreach ($TableRow in $TableRows)
+    {
+        if (-not $StatisticWorksheets.Contains($TableRow.Statistic))
+        {
+            [void]$OrderedRows.Add($TableRow)
+        }
+    }
+
+    foreach ($StatisticName in $StatisticWorksheets.Keys)
+    {
+        foreach ($TableRow in @($TableRows | Where-Object { $_.Statistic -eq $StatisticName }))
+        {
+            [void]$OrderedRows.Add($TableRow)
+        }
+    }
+
+    $TableRows = $OrderedRows
+
     $Package = $TableRows |
         Export-Excel -Path $Path -WorksheetName 'RunStatistics' -Title 'Run Statistics' -TitleBold -TitleSize 14 -TableName 'RunStatisticsTable' -TableStyle Medium2 -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
 
@@ -771,9 +801,9 @@ function Export-RunStatisticsSheet
     $Worksheet = $Package.Workbook.Worksheets['RunStatistics']
     $Worksheet.Column(2).Style.HorizontalAlignment = [OfficeOpenXml.Style.ExcelHorizontalAlignment]::Left
 
-    # Make each statistic that counts a worksheet's rows a link to that
-    # worksheet. Row 1 is the title, row 2 the table header, so the first
-    # statistic is on row 3.
+    # Make each statistic in $StatisticWorksheets a link to its worksheet.
+    # Row 1 is the title, row 2 the table header, so the first statistic is
+    # on row 3.
     $RowNumber = 2
 
     foreach ($TableRow in $TableRows)
