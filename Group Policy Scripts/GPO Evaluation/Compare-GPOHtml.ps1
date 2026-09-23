@@ -106,7 +106,7 @@ no deprecated matches are reported.
 
 .NOTES
 Author:  Siconic
-Version: 1.4
+Version: 1.5
 
 Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
 schema (something that could break a workflow built on the old output).
@@ -114,6 +114,12 @@ MINOR bumps are bug fixes and additions that don't change existing columns
 or behavior. GPOCompareHtml.psm1 is versioned in lockstep with this script.
 
 Changelog:
+  1.5 - GPOCompareHtml.psm1: row and cell lookups now read only a table's
+        own rows and a row's own cells. The old lookup searched every depth,
+        so no firewall rule's detail table was ever found and rules landed
+        in CommonSettings.csv instead of the firewall files. Also fixes
+        list-style ADMX values not being folded into Value. Expect
+        ParsedSettings.csv and the comparison files to change slightly.
   1.4 - Firewall rules split into their own comparison, matching the
         pattern used for regular settings: FirewallRulesCommon.csv (a rule
         - matched by Name + Direction - present in every report with the
