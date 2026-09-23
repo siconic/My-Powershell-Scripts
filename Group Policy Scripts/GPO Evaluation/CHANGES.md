@@ -255,6 +255,38 @@ did and didn't catch.
   Unclassified) rather than parsed, since their per-field layout doesn't
   fit the generic table handlers.
 
+## Intune policy plan (New-IntunePolicyPlan.ps1) - current: 1.0
+
+- **1.0** - New script. Reads the output of Compare-GPOXml.ps1 or
+  Compare-GPOHtml.ps1 (IntuneMigrationCandidates and FirewallRules, from
+  the CSV files or the GPOCompare workbook) and writes
+  `IntunePolicyPlan.xlsx`, a proposed set of Intune policies. A setting
+  with a given value is grouped by the exact set of GPOs (or reports) that
+  have that value: Baseline (every GPO), Shared (two or more), Single
+  (one). A GPO with several values for one setting is compared as the set
+  of values. Each group is split by scope (Device / User) and by Intune
+  policy type, taken from IntuneType with an editable keyword table
+  (`$PolicyTypeRules`: Firewall, Account protection, Attack surface
+  reduction, Antivirus, Disk encryption, LAPS, no direct mapping,
+  Settings Catalog, Remediation script; Unmapped settings go to "Needs
+  mapping"). Firewall rules are grouped the same way by name + direction
+  + rule fields. Deprecated and NoIntuneEquivalent settings go to
+  NotMigrated; settings and rules with different values in different GPOs
+  are listed on Conflicts. Worksheets (blue tables): Summary (counts
+  linked to their worksheets), PolicyPlan, PolicySettings (only the
+  columns needed to build the policies: PolicyName, GPOName / ReportName,
+  Class, SettingName, Value, WinningGPO for HTML, IntuneType,
+  IntuneSetting, MappingStatus, Confidence), FirewallRules, Conflicts,
+  NotMigrated. `-PolicyNamePrefix` adds text to every policy name;
+  `-FilePrefix` picks one run when the folder has several. Run in Windows
+  PowerShell 5.1 with synthetic XML-format output (3 GPOs, one case per
+  rule): 10 policies (2 Baseline, 2 Shared, 6 Single) as worked out by
+  hand, conflicts and not-migrated settings listed, list values in a
+  different order grouped together, `=` text kept as text. Also run on
+  HTML-script CSV output and on a compare workbook with a prefix, and a
+  folder with two runs stopped without `-FilePrefix`. Not yet run on real
+  GPO exports.
+
 ## Intune mapping import (Import-IntuneMappingWorkbook.ps1) - current: 1.0
 
 - **1.0** - New script. Reads manual GPO-to-Intune mapping workbooks
