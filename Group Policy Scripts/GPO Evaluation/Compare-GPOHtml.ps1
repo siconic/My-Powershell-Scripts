@@ -49,8 +49,21 @@ MissingSettingsMatrix.csv
     Present / Missing per report for every setting name.
 
 FirewallRules.csv
-    Inventory of firewall rules (Inbound and Outbound) with their resolved
-    detail fields (Enabled, Program, Action, Protocol, ports, profile).
+    Raw inventory of every firewall rule (Inbound and Outbound) parsed from
+    every report, with its resolved detail fields (Enabled, Program,
+    Action, Protocol, ports, scopes, Profile) and WinningGPO. One row per
+    rule per report.
+
+FirewallRulesCommon.csv
+    A rule (matched by Name + Direction) present in every report with the
+    same configuration (WinningGPO excluded from the comparison, since it
+    can differ across reports even for an identical effective rule).
+
+FirewallRulesUnique.csv
+    A rule present in only some reports, or present in every report but
+    with a different configuration in at least one. PresentIn lists the
+    reports; ConfigurationDiffers is True when the reports that do have the
+    rule disagree on its configuration.
 
 IntuneMigrationCandidates.csv
     Every setting with its Intune mapping from the mapping file, plus a
@@ -93,7 +106,7 @@ no deprecated matches are reported.
 
 .NOTES
 Author:  Siconic
-Version: 1.3
+Version: 1.4
 
 Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
 schema (something that could break a workflow built on the old output).
@@ -101,6 +114,18 @@ MINOR bumps are bug fixes and additions that don't change existing columns
 or behavior. GPOCompareHtml.psm1 is versioned in lockstep with this script.
 
 Changelog:
+  1.4 - Firewall rules split into their own comparison, matching the
+        pattern used for regular settings: FirewallRulesCommon.csv (a rule
+        - matched by Name + Direction - present in every report with the
+        same configuration) and FirewallRulesUnique.csv (present in only
+        some reports, or with a differing configuration). FirewallRules.csv
+        remains the raw per-report inventory. Also fixed
+        GPOCompareHtml.psm1's Get-Attribute, which is why FirewallRules.csv
+        was coming back empty: it used getAttributeNode(name), case-
+        sensitive in the HTMLFile COM document mode, querying 'colSpan'
+        against gpresult's lowercase 'colspan' attribute - silently
+        returning null instead of throwing, which broke every nested-
+        detail-table lookup. Switched to the case-insensitive getAttribute.
   1.3 - GPOCompareHtml.psm1: replaced all 4 uses of the "{0}={1}" -f
         composite-format operator with plain string interpolation,
         matching the same fix already applied to GPOCompare.psm1 for the
@@ -471,6 +496,138 @@ foreach ($ReportName in $AllReports)
 }
 
 # ------------------------------------------------------------
+# Firewall Rules: Common vs Unique
+# ------------------------------------------------------------
+# A rule's identity is Name + Direction. Everything else (Enabled, Profile,
+# Action, Program, Protocol, ports, scopes, Security, Service, Group,
+# Description) is its configuration, compared across reports the same way
+# regular settings are - WinningGPO is excluded from the comparison, same
+# as the settings comparison above, since it can differ across reports even
+# when the effective rule is identical.
+
+$FirewallConfigFields = @(
+    'Enabled', 'Profile', 'Action', 'Program', 'Protocol',
+    'LocalPort', 'RemotePort', 'LocalScope', 'RemoteScope',
+    'Security', 'Service', 'Group', 'Description'
+)
+
+function Get-FirewallConfigValue
+{
+    param($Rule)
+
+    (
+        $FirewallConfigFields |
+        ForEach-Object { "$_=$($Rule.$_)" }
+    ) -join $Sep
+}
+
+$FirewallByIdentity = @{}
+
+foreach ($Rule in $AllFirewall)
+{
+    $IdentityKey = @($Rule.Name, $Rule.Direction) -join $Sep
+
+    if (-not $FirewallByIdentity.ContainsKey($IdentityKey))
+    {
+        $FirewallByIdentity[$IdentityKey] = [System.Collections.ArrayList]::new()
+    }
+
+    [void]$FirewallByIdentity[$IdentityKey].Add($Rule)
+}
+
+$FirewallCommon = [System.Collections.ArrayList]::new()
+$FirewallUnique = [System.Collections.ArrayList]::new()
+
+foreach ($IdentityKey in ($FirewallByIdentity.Keys | Sort-Object))
+{
+    $Rules = $FirewallByIdentity[$IdentityKey]
+
+    $ByReport = @{}
+
+    foreach ($Rule in $Rules)
+    {
+        if (-not $ByReport.ContainsKey($Rule.ReportName))
+        {
+            $ByReport[$Rule.ReportName] = [System.Collections.Generic.List[string]]::new()
+        }
+
+        $ByReport[$Rule.ReportName].Add((Get-FirewallConfigValue $Rule))
+    }
+
+    $ReportCount = $ByReport.Count
+
+    $Signatures =
+        @(
+            foreach ($ReportName in $ByReport.Keys)
+            {
+                (@($ByReport[$ReportName] | Sort-Object -Unique)) -join $Sep
+            }
+        )
+
+    $SignatureCount = @($Signatures | Sort-Object -Unique).Count
+
+    if ($ReportCount -eq $TotalReports -and $SignatureCount -eq 1)
+    {
+        $First = $Rules[0]
+
+        $Row = [ordered]@{
+            Name      = $First.Name
+            Direction = $First.Direction
+        }
+
+        foreach ($Field in $FirewallConfigFields)
+        {
+            $Row[$Field] = $First.$Field
+        }
+
+        $Row['PresentIn'] = (@($Rules.ReportName | Sort-Object -Unique) -join "; ")
+
+        [void]$FirewallCommon.Add([PSCustomObject]$Row)
+    }
+    else
+    {
+        $ConfigMap = @{}
+
+        foreach ($Rule in $Rules)
+        {
+            $ConfigKey = Get-FirewallConfigValue $Rule
+
+            if (-not $ConfigMap.ContainsKey($ConfigKey))
+            {
+                $ConfigMap[$ConfigKey] = @{
+                    Item    = $Rule
+                    Reports = [System.Collections.Generic.HashSet[string]]::new()
+                }
+            }
+
+            [void]$ConfigMap[$ConfigKey].Reports.Add($Rule.ReportName)
+        }
+
+        foreach ($ConfigKey in ($ConfigMap.Keys | Sort-Object))
+        {
+            $Entry = $ConfigMap[$ConfigKey]
+
+            $Row = [ordered]@{
+                Name      = $Entry.Item.Name
+                Direction = $Entry.Item.Direction
+            }
+
+            foreach ($Field in $FirewallConfigFields)
+            {
+                $Row[$Field] = $Entry.Item.$Field
+            }
+
+            $Row['PresentIn']          = (@($Entry.Reports | Sort-Object) -join "; ")
+            $Row['PresentInCount']     = $ReportCount
+            $Row['ConfigurationDiffers'] = ($SignatureCount -gt 1)
+
+            [void]$FirewallUnique.Add([PSCustomObject]$Row)
+        }
+    }
+}
+
+
+# ------------------------------------------------------------
 # Build Comparison Maps
 # ------------------------------------------------------------
 # Note: comparisons intentionally ignore WinningGPO. Two reports can agree
@@ -808,20 +965,22 @@ $UnmappedCount =
 
 $Statistics =
     [PSCustomObject]@{
-        Timestamp        = Get-Date
-        HtmlFiles        = $HtmlFiles.Count
-        ReportsParsed    = $TotalReports
-        Settings         = $AllSettings.Count
-        FirewallRules    = $AllFirewall.Count
-        CommonSettings   = @($CommonSettings).Count
-        CommonByName     = @($CommonSettingsByName).Count
-        UniqueSettings   = @($UniqueSettings).Count
-        Conflicts        = @($ConflictingSettings).Count
-        Duplicates       = @($DuplicateSettings).Count
-        Deprecated       = $DeprecatedSettings.Count
-        UnmappedSettings = $UnmappedCount
-        Unclassified     = $AllUnclassified.Count
-        ParseFailures    = $Failures.Count
+        Timestamp             = Get-Date
+        HtmlFiles             = $HtmlFiles.Count
+        ReportsParsed         = $TotalReports
+        Settings              = $AllSettings.Count
+        FirewallRules         = $AllFirewall.Count
+        FirewallCommon        = @($FirewallCommon).Count
+        FirewallUnique        = @($FirewallUnique).Count
+        CommonSettings        = @($CommonSettings).Count
+        CommonByName          = @($CommonSettingsByName).Count
+        UniqueSettings        = @($UniqueSettings).Count
+        Conflicts             = @($ConflictingSettings).Count
+        Duplicates            = @($DuplicateSettings).Count
+        Deprecated            = $DeprecatedSettings.Count
+        UnmappedSettings      = $UnmappedCount
+        Unclassified          = $AllUnclassified.Count
+        ParseFailures         = $Failures.Count
     }
 
 # ------------------------------------------------------------
@@ -836,6 +995,8 @@ Export-Report $DuplicateSettings     "DuplicateSettings.csv"
 Export-Report $DeprecatedSettings    "DeprecatedPolicies.csv"
 Export-Report $Matrix                "MissingSettingsMatrix.csv"
 Export-Report $MigrationCandidates   "IntuneMigrationCandidates.csv"
+Export-Report $FirewallCommon        "FirewallRulesCommon.csv"
+Export-Report $FirewallUnique        "FirewallRulesUnique.csv"
 Export-Report $Statistics            "RunStatistics.csv"
 
 # ------------------------------------------------------------
@@ -852,6 +1013,8 @@ $ExpectedReports = @(
     "DeprecatedPolicies.csv"
     "MissingSettingsMatrix.csv"
     "FirewallRules.csv"
+    "FirewallRulesCommon.csv"
+    "FirewallRulesUnique.csv"
     "IntuneMigrationCandidates.csv"
     "UnclassifiedSettings.csv"
     "ParserFailures.csv"
@@ -898,4 +1061,3 @@ if ($AllUnclassified.Count -gt 0)
 
 Write-Host "Reports written to:"
 Write-Host $OutputFolder
-
