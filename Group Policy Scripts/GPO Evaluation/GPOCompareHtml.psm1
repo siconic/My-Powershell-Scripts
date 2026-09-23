@@ -26,9 +26,14 @@
 # COM interop calls in particular should be treated as the highest-risk
 # part of this file until you run it.
 #
-# Version 1.2
+# Version 1.3
 #
 # Changelog:
+#   1.3 - Replaced all 4 uses of the "{0}={1}" -f composite-format
+#         operator with plain string interpolation, matching the same fix
+#         already applied to GPOCompare.psm1 (the XML side) for the same
+#         reported error. String interpolation has no template/argument-
+#         list mechanism to fail, so this removes the exception class.
 #   1.2 - Fixed the actual reported source of "The property 'Count' cannot
 #         be found on this object": Get-AllTags (26 call sites) and
 #         Get-HeadingAncestors (4 call sites) both return a .NET
@@ -783,7 +788,7 @@ function ConvertTo-DetailValueString {
             {
                 if ($RowValues.Count -ge 2 -and -not [string]::IsNullOrWhiteSpace($RowValues[0]))
                 {
-                    "{0}={1}" -f $RowValues[0], $RowValues[1]
+                    "$($RowValues[0])=$($RowValues[1])"
                 }
                 elseif ($RowValues.Count -eq 1)
                 {
@@ -977,7 +982,7 @@ function Parse-StandardPolicyTable {
 
                         if (-not [string]::IsNullOrWhiteSpace($CellText))
                         {
-                            "{0}={1}" -f $Headers[$i], $CellText
+                            "$($Headers[$i])=$CellText"
                         }
                     }
                 )
@@ -1019,7 +1024,7 @@ function Parse-StandardPolicyTable {
                 }
                 else
                 {
-                    $ValueText = "{0}; {1}" -f $ValueText, $DetailText
+                    $ValueText = "$ValueText; $DetailText"
                 }
             }
         }
@@ -1382,10 +1387,7 @@ function Parse-SystemServicesSection {
                     }
 
                     [void]$Entries.Add(
-                        "{0}: {1} - {2}" -f
-                        (Get-CleanText $DetailCells[1]),
-                        (Get-CleanText $DetailCells[0]),
-                        (Get-CleanText $DetailCells[2])
+                        "$(Get-CleanText $DetailCells[1]): $(Get-CleanText $DetailCells[0]) - $(Get-CleanText $DetailCells[2])"
                     )
                 }
 
