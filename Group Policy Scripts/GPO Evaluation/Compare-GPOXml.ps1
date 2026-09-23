@@ -64,6 +64,11 @@ ParserFailures.csv
 RunStatistics.csv
     Counts for the run.
 
+GPOCompareXml.xlsx (only with -ExcelOutput)
+    One workbook with one worksheet per report above, in the same order.
+    Every value is stored as text, as in the CSV files. The CSV files are
+    still written.
+
 .PARAMETER XmlFolder
 Folder containing XML exports (Get-GPOReport -ReportType Xml).
 
@@ -91,15 +96,27 @@ for no prefix. Pass -FilePrefix "" to skip the question and use no prefix.
 In a session that cannot ask (for example -NonInteractive), no prefix is
 used.
 
+.PARAMETER ExcelOutput
+Also write all reports to one Excel workbook, GPOCompareXml.xlsx (with the
+file name prefix, if one is used), one worksheet per report. Each worksheet
+has a bold, filtered and frozen header row. Needs the ImportExcel module
+(Install-Module ImportExcel -Scope CurrentUser); Excel itself is not
+needed. Without the module, a warning is shown and only the CSV files are
+written. A value longer than 32767 characters (the Excel cell limit) is cut
+to that length in the workbook only, with a warning.
+
 .EXAMPLE
 .\Compare-GPOXml.ps1 -XmlFolder "C:\GPOProject\XML" -OutputFolder "C:\GPOProject\Output"
 
 .EXAMPLE
 .\Compare-GPOXml.ps1 -XmlFolder "C:\GPOProject\XML" -OutputFolder "C:\GPOProject\Output" -FilePrefix LS
 
+.EXAMPLE
+.\Compare-GPOXml.ps1 -XmlFolder "C:\GPOProject\XML" -OutputFolder "C:\GPOProject\Output" -FilePrefix LS -ExcelOutput
+
 .NOTES
 Author:  Siconic
-Version: 3.3
+Version: 3.4
 
 Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
 schema (something that could break a workflow built on the old output).
@@ -108,6 +125,11 @@ or behavior. GPOCompare.psm1 is versioned in lockstep with this script,
 since the two are always used together.
 
 Changelog:
+  3.4 - New -ExcelOutput switch. Also writes GPOCompareXml.xlsx, one
+        worksheet per report, using the ImportExcel module. The CSV files
+        are unchanged. Without the module, a warning is shown and only the
+        CSV files are written. No module changes; the module version is
+        kept in lockstep.
   3.3 - New -FilePrefix parameter. The prefix and a hyphen are added to
         the start of every output file name (LS-CommonSettings.csv). If
         the parameter is not given, the script asks for it; an empty
@@ -154,7 +176,9 @@ param(
 
     [string]$DeprecatedReferencePath = (Join-Path $PSScriptRoot "DeprecatedPoliciesReference.md"),
 
-    [string]$FilePrefix
+    [string]$FilePrefix,
+
+    [switch]$ExcelOutput
 )
 
 $ErrorActionPreference = "Stop"
@@ -223,6 +247,28 @@ else
 }
 
 # ------------------------------------------------------------
+# Excel workbook check
+# ------------------------------------------------------------
+
+# -ExcelOutput needs the ImportExcel module. Without it, only the CSV files
+# are written.
+if ($ExcelOutput)
+{
+    if (@(Get-Module -ListAvailable -Name ImportExcel).Count -eq 0)
+    {
+        Write-Warning "-ExcelOutput was given, but the ImportExcel module is not installed. Only the CSV files will be written. To install it, run: Install-Module ImportExcel -Scope CurrentUser"
+        $ExcelOutput = $false
+    }
+    else
+    {
+        Import-Module ImportExcel -ErrorAction Stop
+    }
+}
+
+# Reports collected by Export-Report for the Excel workbook.
+$ExcelSheets = [System.Collections.ArrayList]::new()
+
+# ------------------------------------------------------------
 # Helper Functions
 # ------------------------------------------------------------
 
@@ -245,6 +291,17 @@ function Export-Report
         $Rows = @($Data)
     }
 
+    # Keep the rows for the Excel workbook, which is written at the end.
+    if ($ExcelOutput)
+    {
+        [void]$ExcelSheets.Add(
+            [PSCustomObject]@{
+                Name = [System.IO.Path]::GetFileNameWithoutExtension($Name)
+                Rows = $Rows
+            }
+        )
+    }
+
     # Export-Csv writes nothing for empty input; create an empty file instead
     # so every report exists.
     if ($Rows.Count -eq 0)
@@ -255,6 +312,130 @@ function Export-Report
 
     $Rows |
     Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8
+}
+
+function ConvertTo-ExcelSheetRows
+{
+    param(
+        [AllowNull()]
+        [object[]]$Rows
+    )
+
+    # An Excel cell holds at most 32767 characters. Longer values are cut to
+    # that length in the workbook only; the CSV files keep the full value.
+    $MaxCellLength = 32767
+
+    $Output    = [System.Collections.ArrayList]::new()
+    $Truncated = 0
+
+    # Export-Excel writes any text that starts with "=" as a formula, and has
+    # no option to turn this off. These cells are recorded here so that
+    # Export-ExcelWorkbook can write their text back as plain text.
+    $TextCells = [System.Collections.ArrayList]::new()
+
+    # Row 1 of the worksheet is the header row.
+    $RowNumber = 1
+
+    foreach ($Row in @($Rows))
+    {
+        $RowNumber++
+        $ColumnNumber = 0
+        $Copy = [ordered]@{}
+
+        foreach ($Property in $Row.PSObject.Properties)
+        {
+            $ColumnNumber++
+            $Value = $Property.Value
+
+            if (($Value -is [string]) -and ($Value.Length -gt $MaxCellLength))
+            {
+                $Value = $Value.Substring(0, $MaxCellLength)
+                $Truncated++
+            }
+
+            if (($Value -is [string]) -and $Value.StartsWith('='))
+            {
+                [void]$TextCells.Add(
+                    [PSCustomObject]@{
+                        Row    = $RowNumber
+                        Column = $ColumnNumber
+                        Value  = $Value
+                    }
+                )
+            }
+
+            $Copy[$Property.Name] = $Value
+        }
+
+        [void]$Output.Add([PSCustomObject]$Copy)
+    }
+
+    return [PSCustomObject]@{
+        Rows      = $Output
+        Truncated = $Truncated
+        TextCells = $TextCells
+    }
+}
+
+function Export-ExcelWorkbook
+{
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+
+        [AllowNull()]
+        [object[]]$Sheets
+    )
+
+    # Export-Excel adds worksheets to an existing workbook, so remove the
+    # workbook from any earlier run first.
+    if (Test-Path -LiteralPath $Path)
+    {
+        Remove-Item -LiteralPath $Path -Force
+    }
+
+    $TotalTruncated = 0
+
+    foreach ($Sheet in @($Sheets))
+    {
+        $SheetRows = @($Sheet.Rows)
+        $TextCells = @()
+
+        if ($SheetRows.Count -eq 0)
+        {
+            $SheetRows = @([PSCustomObject]@{ Result = "No rows" })
+        }
+        else
+        {
+            $Converted       = ConvertTo-ExcelSheetRows -Rows $SheetRows
+            $SheetRows       = @($Converted.Rows)
+            $TextCells       = @($Converted.TextCells)
+            $TotalTruncated += $Converted.Truncated
+        }
+
+        # -NoNumberConversion and -NoHyperLinkConversion keep every value as
+        # text, as in the CSV files.
+        $Package = $SheetRows |
+            Export-Excel -Path $Path -WorksheetName $Sheet.Name -AutoFilter -FreezeTopRow -BoldTopRow -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
+
+        # Write text that starts with "=" back as plain text instead of a
+        # formula.
+        $Worksheet = $Package.Workbook.Worksheets[$Sheet.Name]
+
+        foreach ($TextCell in $TextCells)
+        {
+            $Cell         = $Worksheet.Cells[$TextCell.Row, $TextCell.Column]
+            $Cell.Formula = ""
+            $Cell.Value   = $TextCell.Value
+        }
+
+        Close-ExcelPackage -ExcelPackage $Package
+    }
+
+    if ($TotalTruncated -gt 0)
+    {
+        Write-Warning "$TotalTruncated value(s) were longer than 32767 characters and were cut to that length in the Excel workbook. The CSV files have the full values."
+    }
 }
 
 function Import-IntuneMapping
@@ -936,6 +1117,40 @@ foreach ($Report in $ExpectedReports)
     else
     {
         Write-Warning "$($FileNamePrefix)$($Report) missing"
+    }
+}
+
+# ------------------------------------------------------------
+# Excel workbook (-ExcelOutput)
+# ------------------------------------------------------------
+
+if ($ExcelOutput)
+{
+    $WorkbookName = "$($FileNamePrefix)GPOCompareXml.xlsx"
+    $WorkbookPath = Join-Path $OutputFolder $WorkbookName
+
+    # Worksheets in the same order as the report list above.
+    $OrderedSheets = [System.Collections.ArrayList]::new()
+
+    foreach ($Report in $ExpectedReports)
+    {
+        $SheetName = [System.IO.Path]::GetFileNameWithoutExtension($Report)
+
+        foreach ($Sheet in @($ExcelSheets | Where-Object { $_.Name -eq $SheetName }))
+        {
+            [void]$OrderedSheets.Add($Sheet)
+        }
+    }
+
+    Export-ExcelWorkbook -Path $WorkbookPath -Sheets @($OrderedSheets)
+
+    if (Test-Path -LiteralPath $WorkbookPath)
+    {
+        Write-Host "[OK] $WorkbookName ($($OrderedSheets.Count) worksheets)"
+    }
+    else
+    {
+        Write-Warning "$WorkbookName missing"
     }
 }
 
