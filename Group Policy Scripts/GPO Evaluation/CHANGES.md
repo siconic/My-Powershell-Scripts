@@ -284,10 +284,21 @@ did and didn't catch.
 - **1.0** - New script. Reads the output of Compare-GPOXml.ps1 or
   Compare-GPOHtml.ps1 (IntuneMigrationCandidates and FirewallRules, from
   the CSV files or the GPOCompare workbook) and writes
-  `IntunePolicyPlan.xlsx`, a proposed set of Intune policies. A setting
-  with a given value is grouped by the exact set of GPOs (or reports) that
-  have that value: Baseline (every GPO), Shared (two or more), Single
-  (one). A GPO with several values for one setting is compared as the set
+  `IntunePolicyPlan.xlsx`, a proposed set of Intune policies. The Baseline
+  is taken from the compare script's CommonSettings report (plus
+  FirewallSettingsCommon for HTML output): a setting is Baseline when all
+  its value rows are in it. Baseline policies are assigned to all devices
+  (or all users); without CommonSettings in the input, a warning is shown
+  and the Baseline is calculated the same way. Every other setting with a
+  given value is grouped by the exact set of GPOs (or reports) that have
+  that value: Shared (two or more), Single (one). The policy plan has an
+  Assignment column (All devices / All users, or "Devices of: ..." /
+  "Users of: ..."), and the Summary shows the Baseline source. Tested:
+  with CommonSettings the Baseline followed it (a setting listed there
+  moved into the Baseline even though it was in only two GPOs); without it
+  the warning appeared and the same Baseline was calculated; real HTML
+  compare output (CSV and workbook) gave a Baseline exactly when
+  CommonSettings had rows. A GPO with several values for one setting is compared as the set
   of values. Each group is split by scope (Device / User) and by Intune
   policy type, taken from IntuneType with an editable keyword table
   (`$PolicyTypeRules`: Firewall, Account protection, Attack surface

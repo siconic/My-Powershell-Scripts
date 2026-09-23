@@ -8,13 +8,20 @@ files or the Excel workbook) and writes IntunePolicyPlan.xlsx: a proposed
 set of Intune policies that together hold every migratable setting.
 
 Grouping:
-- A setting with a given value belongs to the exact set of GPOs that
-  configure it with that value. All settings that share the same set of
-  GPOs form one group, so each proposed policy can be assigned to the
+- The Baseline comes from the compare script's CommonSettings report
+  (plus FirewallSettingsCommon for HTML output): a setting is Baseline
+  when all its value rows are in it, that is, it is configured
+  identically in every GPO. The Baseline policies are assigned to all
+  devices (or all users, for User settings); every other policy is built
+  on top of it. If the input has no CommonSettings, a warning is shown and
+  the Baseline is calculated the same way from IntuneMigrationCandidates.
+- Every other setting with a given value belongs to the exact set of GPOs
+  that configure it with that value. All settings that share the same set
+  of GPOs form one group, so each proposed policy can be assigned to the
   devices or users those GPOs applied to:
-      Baseline   the setting is in every GPO
-      Shared     the setting is in two or more GPOs, but not all
-      Single     the setting is in one GPO
+      Baseline   in CommonSettings: assigned to all devices / all users
+      Shared     in two or more GPOs, but not in CommonSettings
+      Single     in one GPO
 - Each group is split by scope (Device for Computer settings, User for
   User settings) and by Intune policy type (Settings Catalog, Endpoint
   security - Firewall, Endpoint security - Account protection, ...),
@@ -44,8 +51,11 @@ Workbook written to OutputFolder (every worksheet is a blue Excel table):
 Summary
     Counts for the run (each links to its worksheet or table), and below
     them the policy plan: one row per proposed Intune policy with its
-    worksheet, tier, GPOs, scope, type and number of settings or firewall
-    rules. Each policy name links to its worksheet.
+    worksheet, tier, assignment (All devices / All users for the Baseline,
+    "Devices of: ..." or "Users of: ..." otherwise), GPOs, scope, type and
+    number of settings or firewall rules. Each policy name links to its
+    worksheet. The Baseline source (CommonSettings, or calculated) is
+    shown with the counts.
 
 One worksheet per proposed policy (P01, P02, ... in plan order)
     Titled with the full policy name, with a link back to Summary. Excel
@@ -270,6 +280,51 @@ function Read-CompareReport
     }
 
     return $Rows
+}
+
+function Test-CompareReport
+{
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    # Whether the compare output has this report at all (an empty report
+    # counts as present).
+    if ($script:InputMode -eq 'Csv')
+    {
+        return (Test-Path -LiteralPath (Join-Path $script:InputFolder "$($script:InputPrefix)$($Name).csv") -PathType Leaf)
+    }
+
+    return (@(Get-ExcelSheetInfo -Path $script:InputWorkbook | ForEach-Object { $_.Name }) -contains $Name)
+}
+
+function Get-SettingRowKey
+{
+    param(
+        [Parameter(Mandatory)]
+        [object]$Row,
+
+        [Parameter(Mandatory)]
+        [string[]]$ValueNames,
+
+        [Parameter(Mandatory)]
+        [string[]]$StateNames
+    )
+
+    # Class, Extension, Category, SettingName, Value and State (XML only)
+    # of one row, case ignored: the key the compare scripts use to build
+    # CommonSettings.
+    return (
+        @(
+            (Get-PropertyValue $Row @('Class'))
+            (Get-PropertyValue $Row @('Extension'))
+            (Get-PropertyValue $Row @('Category'))
+            (Get-PropertyValue $Row @('SettingName'))
+            (Get-PropertyValue $Row $ValueNames)
+            (Get-PropertyValue $Row $StateNames)
+        ) -join $Sep
+    ).ToLowerInvariant()
 }
 
 function Get-PolicyType
@@ -584,27 +639,6 @@ function Write-SummarySheet
     Close-ExcelPackage -ExcelPackage $Package
 }
 
-function Get-TierName
-{
-    param(
-        [int]$SourceCount,
-
-        [int]$TotalSources
-    )
-
-    if (($SourceCount -eq $TotalSources) -and ($TotalSources -gt 1))
-    {
-        return 'Baseline'
-    }
-
-    if ($SourceCount -gt 1)
-    {
-        return 'Shared'
-    }
-
-    return 'Single'
-}
-
 # ------------------------------------------------------------
 # Find the input
 # ------------------------------------------------------------
@@ -696,6 +730,36 @@ Write-Host "$($SourceLabel): $($AllSources.Count) ($($AllSources -join ', '))"
 Write-Host "Settings rows: $($CandidateRows.Count); firewall rule rows: $($FirewallRows.Count)"
 
 # ------------------------------------------------------------
+# Baseline: CommonSettings
+# ------------------------------------------------------------
+
+# The Baseline - the policies for all devices and all users - is taken
+# from the compare script's CommonSettings report: settings configured
+# identically in every GPO. HTML output keeps common firewall settings in
+# FirewallSettingsCommon instead, so that report is read too. A setting is
+# Baseline when all its value rows are in these reports. Without
+# CommonSettings (for example, only some files were copied), the Baseline
+# is calculated here the same way from IntuneMigrationCandidates.
+$CommonRowKeys     = [System.Collections.Generic.HashSet[string]]::new()
+$UseCommonSettings = Test-CompareReport -Name 'CommonSettings'
+
+if ($UseCommonSettings)
+{
+    foreach ($Row in (@(Read-CompareReport -Name 'CommonSettings') + @(Read-CompareReport -Name 'FirewallSettingsCommon')))
+    {
+        [void]$CommonRowKeys.Add((Get-SettingRowKey -Row $Row -ValueNames @('Value') -StateNames @('State')))
+    }
+
+    $BaselineSource = "CommonSettings"
+    Write-Host "Baseline: from CommonSettings ($($CommonRowKeys.Count) rows)"
+}
+else
+{
+    $BaselineSource = "Calculated (CommonSettings not found)"
+    Write-Warning "CommonSettings was not found in the input. The Baseline is calculated from IntuneMigrationCandidates: settings with the same values in every GPO or report."
+}
+
+# ------------------------------------------------------------
 # Settings: one value set per GPO and setting
 # ------------------------------------------------------------
 
@@ -708,6 +772,10 @@ $SettingInfo = [ordered]@{}
 
 # Setting key -> source -> winning GPOs (HTML output only).
 $SettingWinning = @{}
+
+# Setting key -> $true while every value row of the setting is in
+# CommonSettings.
+$SettingAllCommon = @{}
 
 foreach ($Row in $CandidateRows)
 {
@@ -727,9 +795,15 @@ foreach ($Row in $CandidateRows)
 
     if (-not $SettingInfo.Contains($SettingKey))
     {
-        $SettingInfo[$SettingKey]    = $Row
-        $SettingValues[$SettingKey]  = @{}
-        $SettingWinning[$SettingKey] = @{}
+        $SettingInfo[$SettingKey]      = $Row
+        $SettingValues[$SettingKey]    = @{}
+        $SettingWinning[$SettingKey]   = @{}
+        $SettingAllCommon[$SettingKey] = $true
+    }
+
+    if (-not $CommonRowKeys.Contains((Get-SettingRowKey -Row $Row -ValueNames @('GPOValue', 'Value') -StateNames @('GPOState'))))
+    {
+        $SettingAllCommon[$SettingKey] = $false
     }
 
     if (-not $SettingValues[$SettingKey].ContainsKey($Source))
@@ -794,6 +868,19 @@ foreach ($SettingKey in $SettingInfo.Keys)
     $Scope         = Get-ScopeName (Get-PropertyValue $Info @('Class'))
     $PolicyType    = Get-PolicyType -IntuneType (Get-PropertyValue $Info @('IntuneType')) -MappingStatus $MappingStatus
 
+    # Baseline: every value row of the setting is in CommonSettings. Without
+    # CommonSettings: the same values in every GPO. (Every row in
+    # CommonSettings means the same values in every GPO, so a Baseline
+    # setting has one value group.)
+    if ($UseCommonSettings)
+    {
+        $IsBaseline = [bool]$SettingAllCommon[$SettingKey]
+    }
+    else
+    {
+        $IsBaseline = ($ByValue.Count -eq 1) -and (@($SettingValues[$SettingKey].Keys).Count -eq $AllSources.Count)
+    }
+
     foreach ($Group in $ByValue.Values)
     {
         $Sources = @($Group.Sources | Sort-Object)
@@ -803,7 +890,8 @@ foreach ($SettingKey in $SettingInfo.Keys)
                 Scope         = $Scope
                 PolicyType    = $PolicyType
                 Sources       = $Sources
-                SourceKey     = ($Sources -join $Sep).ToLowerInvariant()
+                SourceKey     = if ($IsBaseline) { '#baseline' } else { ($Sources -join $Sep).ToLowerInvariant() }
+                IsBaseline    = $IsBaseline
                 Class         = Get-PropertyValue $Info @('Class')
                 Extension     = Get-PropertyValue $Info @('Extension')
                 Category      = Get-PropertyValue $Info @('Category')
@@ -913,12 +1001,17 @@ foreach ($RuleKey in $RuleConfigs.Keys)
     {
         $Sources = @($RuleConfigs[$RuleKey][$ConfigKey] | Sort-Object)
 
+        # Baseline: the same rule configuration in every GPO (the rule
+        # compare scripts' FirewallRulesCommon uses the same test).
+        $IsBaseline = $Sources.Count -eq $AllSources.Count
+
         [void]$PlacedRules.Add(
             [PSCustomObject]@{
                 Scope      = 'Device'
                 PolicyType = 'Endpoint security - Firewall rules'
                 Sources    = $Sources
-                SourceKey  = ($Sources -join $Sep).ToLowerInvariant()
+                SourceKey  = if ($IsBaseline) { '#baseline' } else { ($Sources -join $Sep).ToLowerInvariant() }
+                IsBaseline = $IsBaseline
                 Rule       = $RuleInfo["$RuleKey$Sep$ConfigKey"]
                 IsConflict = $IsConflict
                 PolicyName = ""
@@ -939,8 +1032,11 @@ foreach ($Item in @($PlacedSettings) + @($PlacedRules))
 
     if (-not $PolicyGroups.Contains($PolicyKey))
     {
+        # A Baseline policy applies to all devices or users, so its GPOs are
+        # all of them.
         $PolicyGroups[$PolicyKey] = [PSCustomObject]@{
-            Sources    = $Item.Sources
+            Sources    = if ($Item.IsBaseline) { $AllSources } else { $Item.Sources }
+            IsBaseline = $Item.IsBaseline
             Scope      = $Item.Scope
             PolicyType = $Item.PolicyType
             Items      = [System.Collections.ArrayList]::new()
@@ -950,11 +1046,13 @@ foreach ($Item in @($PlacedSettings) + @($PlacedRules))
     [void]$PolicyGroups[$PolicyKey].Items.Add($Item)
 }
 
-# Order: most GPOs first (Baseline), then by GPO names, scope and type.
+# Order: Baseline first, then most GPOs first, then by GPO names, scope
+# and type.
 $OrderedGroups =
     @(
         $PolicyGroups.Values |
         Sort-Object `
+            @{ Expression = { [int]$_.IsBaseline }; Descending = $true },
             @{ Expression = { @($_.Sources).Count }; Descending = $true },
             @{ Expression = { @($_.Sources) -join '; ' } },
             @{ Expression = { $_.Scope } },
@@ -970,7 +1068,31 @@ foreach ($Group in $OrderedGroups)
 {
     $PolicyNumber++
     $Sources = @($Group.Sources)
-    $Tier    = Get-TierName -SourceCount $Sources.Count -TotalSources $AllSources.Count
+
+    if ($Group.IsBaseline)
+    {
+        $Tier = 'Baseline'
+    }
+    elseif ($Sources.Count -gt 1)
+    {
+        $Tier = 'Shared'
+    }
+    else
+    {
+        $Tier = 'Single'
+    }
+
+    # Who the policy is assigned to.
+    $ScopeGroup = if ($Group.Scope -eq 'User') { 'users' } else { 'devices' }
+
+    if ($Group.IsBaseline)
+    {
+        $Assignment = "All $ScopeGroup"
+    }
+    else
+    {
+        $Assignment = "$((Get-Culture).TextInfo.ToTitleCase($ScopeGroup)) of: $($Sources -join '; ')"
+    }
 
     switch ($Tier)
     {
@@ -1028,6 +1150,7 @@ foreach ($Group in $OrderedGroups)
             PolicyName          = $PolicyName
             Worksheet           = $SheetName
             Tier                = $Tier
+            Assignment          = $Assignment
             SourceCount         = $Sources.Count
             $SourceLabel        = $Sources -join '; '
             Scope               = $Group.Scope
@@ -1161,6 +1284,7 @@ $ConflictRuleCount    = @($PlacedRules | Where-Object { $_.IsConflict } | ForEac
 $SummaryRows = @(
     [PSCustomObject]@{ Item = 'Created';                      Value = (Get-Date).ToString(); Worksheet = '' }
     [PSCustomObject]@{ Item = "Input";                        Value = $(if ($script:InputMode -eq 'Csv') { "CSV files ($(if ($script:InputPrefix) { $script:InputPrefix } else { 'no prefix' }))" } else { [System.IO.Path]::GetFileName($script:InputWorkbook) }); Worksheet = '' }
+    [PSCustomObject]@{ Item = 'Baseline source';              Value = $BaselineSource; Worksheet = '' }
     [PSCustomObject]@{ Item = $SourceLabel;                   Value = $AllSources.Count; Worksheet = '' }
     [PSCustomObject]@{ Item = 'Proposed Intune policies';     Value = $PolicyPlan.Count; Worksheet = '#Plan' }
     [PSCustomObject]@{ Item = '  Baseline policies';          Value = @($PolicyPlan | Where-Object { $_.Tier -eq 'Baseline' }).Count; Worksheet = '#Plan' }
