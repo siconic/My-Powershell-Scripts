@@ -26,11 +26,11 @@
 # COM interop calls in particular should be treated as the highest-risk
 # part of this file until you run it.
 #
-# Version 1.11
+# Version 2.0
 #
 # Changelog:
-#   1.11 - No changes to this module. Version kept in lockstep with
-#          Compare-GPOHtml.ps1 (-ExcelOutput workbook added).
+#   2.0 - No changes to this module. Version kept in lockstep with
+#         Compare-GPOHtml.ps1 (-ExcelOutput workbook added).
 #   1.10 - No changes to this module. Version kept in lockstep with
 #          Compare-GPOHtml.ps1 (output file name prefix added).
 #   1.9 - The report title table (class "title") is skipped. Its

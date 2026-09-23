@@ -1,9 +1,10 @@
 # GPO Compare Toolset - Version History
 
 Versioning convention (applies to both toolsets): MAJOR bumps mean
-restructured logic or a changed CSV/report schema - something that could
-break a workflow built on the old output. MINOR bumps are bug fixes and
-additions that don't change existing columns or behavior. A script and its
+restructured logic, a changed CSV/report schema - something that could
+break a workflow built on the old output - or a major new feature, such
+as a new output format. MINOR bumps are bug fixes and small additions that
+don't change existing columns or behavior. A script and its
 paired module are always versioned in lockstep (Compare-GPOXml.ps1 +
 GPOCompare.psm1 share one version; Compare-GPOHtml.ps1 + GPOCompareHtml.psm1
 share another), since they're only ever used together.
@@ -15,12 +16,14 @@ validated by re-implementing the same DOM-walk algorithm in Python against
 three real gpresult /h reports - see that toolset's changelog for what that
 did and didn't catch.
 
-## XML toolset (Compare-GPOXml.ps1 + GPOCompare.psm1) - current: 3.4
+## XML toolset (Compare-GPOXml.ps1 + GPOCompare.psm1) - current: 4.0
 
-- **3.4** - New `-ExcelOutput` switch, the same as HTML 1.11. Also writes
-  `GPOCompareXml.xlsx` (with the file name prefix). No module changes. The
+- **4.0** - New `-ExcelOutput` switch (MAJOR: a new output format), the
+  same as HTML 2.0, including RunStatistics as the first worksheet in a
+  blue Statistic / Value table. Also writes `GPOCompareXml.xlsx` (with the
+  file name prefix). No module changes. The
   workbook functions were run in Windows PowerShell 5.1 with test rows
-  (see HTML 1.11). A full XML run with `-ExcelOutput` has not been tested,
+  (see HTML 2.0). A full XML run with `-ExcelOutput` has not been tested,
   because no GPO XML exports were available.
 
 - **3.3** - New `-FilePrefix` parameter, the same as HTML 1.10. The prefix
@@ -54,12 +57,16 @@ did and didn't catch.
   mapping and deprecated-policy matching added; module path, encoding, and
   `-LiteralPath` fixes; duplicate/dead function definitions removed.
 
-## HTML toolset (Compare-GPOHtml.ps1 + GPOCompareHtml.psm1) - current: 1.11
+## HTML toolset (Compare-GPOHtml.ps1 + GPOCompareHtml.psm1) - current: 2.0
 
-- **1.11** - New `-ExcelOutput` switch. The CSV files are still written,
-  unchanged. The script also writes `GPOCompareHtml.xlsx` (with the file
-  name prefix): one worksheet per report, in the same order as the report
-  list, with a bold, filtered and frozen header row. A report with no rows
+- **2.0** - New `-ExcelOutput` switch (MAJOR: a new output format). The
+  CSV files are still written, unchanged. The script also writes
+  `GPOCompareHtml.xlsx` (with the file name prefix): one worksheet per
+  report. RunStatistics is the first
+  worksheet, shown as a two-column Statistic / Value table with a title
+  and Excel's blue Medium2 table style; the CSV keeps its one-row layout.
+  The other worksheets follow in the report-list order, with a bold,
+  filtered and frozen header row. A report with no rows
   gets a worksheet that says "No rows". Uses the ImportExcel module (tested
   with 7.8.10); Excel is not needed. Without the module, a warning is shown
   and only the CSV files are written. Every value is kept as text:
@@ -72,6 +79,8 @@ did and didn't catch.
   40,000-character value were read back unchanged (the long value cut to
   32767), and Excel showed the `=` value as text with no formula; with the
   module hidden, the warning was shown and 18 CSV files were written.
+  Excel opened the workbook on RunStatistics, and a picture of the table
+  exported from Excel showed the blue header and banded rows.
 
 - **1.10** - New `-FilePrefix` parameter. The prefix and a hyphen are added
   to the start of every output file name (`LS-CommonSettings.csv`). A

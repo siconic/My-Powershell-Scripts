@@ -102,9 +102,10 @@ RunStatistics.csv
     Counts for the run.
 
 GPOCompareHtml.xlsx (only with -ExcelOutput)
-    One workbook with one worksheet per report above, in the same order.
-    Every value is stored as text, as in the CSV files. The CSV files are
-    still written.
+    One workbook with one worksheet per report above. RunStatistics is the
+    first worksheet, shown as a Statistic / Value table with a blue header;
+    the other worksheets follow in the order above. Every value is stored as
+    text, as in the CSV files. The CSV files are still written.
 
 .PARAMETER HtmlFolder
 Folder containing gpresult /h HTML reports.
@@ -153,19 +154,21 @@ to that length in the workbook only, with a warning.
 
 .NOTES
 Author:  Siconic
-Version: 1.11
+Version: 2.0
 
-Versioning: MAJOR bumps mean restructured logic or a changed CSV/report
-schema (something that could break a workflow built on the old output).
-MINOR bumps are bug fixes and additions that don't change existing columns
-or behavior. GPOCompareHtml.psm1 is versioned in lockstep with this script.
+Versioning: MAJOR bumps mean restructured logic, a changed CSV/report
+schema (something that could break a workflow built on the old output), or
+a major new feature such as a new output format. MINOR bumps are bug fixes
+and small additions that don't change existing columns or behavior. GPOCompareHtml.psm1 is versioned in lockstep with this script.
 
 Changelog:
-  1.11 - New -ExcelOutput switch. Also writes GPOCompareHtml.xlsx, one
-         worksheet per report, using the ImportExcel module. The CSV files
-         are unchanged. Without the module, a warning is shown and only
-         the CSV files are written. No module changes; the module version
-         is kept in lockstep.
+  2.0 - New -ExcelOutput switch. Also writes GPOCompareHtml.xlsx, one
+        worksheet per report, using the ImportExcel module. RunStatistics
+        is the first worksheet, shown as a Statistic / Value table with a
+        blue header. The CSV files
+        are unchanged. Without the module, a warning is shown and only
+        the CSV files are written. No module changes; the module version
+        is kept in lockstep.
   1.10 - New -FilePrefix parameter. The prefix and a hyphen are added to
          the start of every output file name (LS-CommonSettings.csv). If
          the parameter is not given, the script asks for it; an empty
@@ -458,6 +461,53 @@ function ConvertTo-ExcelSheetRows
     }
 }
 
+function Export-RunStatisticsSheet
+{
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+
+        [AllowNull()]
+        [object[]]$Rows
+    )
+
+    # RunStatistics.csv is one row with one column per count. In the
+    # workbook it is shown as a two-column table (Statistic, Value) with a
+    # title and a blue table style, which is easier to read. The CSV file
+    # keeps the original layout.
+    $TableRows = [System.Collections.ArrayList]::new()
+
+    foreach ($Row in @($Rows))
+    {
+        foreach ($Property in $Row.PSObject.Properties)
+        {
+            $Value = $Property.Value
+
+            # Same text as in the CSV file.
+            if ($Value -is [datetime])
+            {
+                $Value = $Value.ToString()
+            }
+
+            [void]$TableRows.Add(
+                [PSCustomObject]@{
+                    Statistic = $Property.Name
+                    Value     = $Value
+                }
+            )
+        }
+    }
+
+    $Package = $TableRows |
+        Export-Excel -Path $Path -WorksheetName 'RunStatistics' -Title 'Run Statistics' -TitleBold -TitleSize 14 -TableName 'RunStatisticsTable' -TableStyle Medium2 -AutoSize -NoNumberConversion '*' -NoHyperLinkConversion '*' -PassThru
+
+    # Left-align the Value column so the timestamp and the counts line up.
+    $Worksheet = $Package.Workbook.Worksheets['RunStatistics']
+    $Worksheet.Column(2).Style.HorizontalAlignment = [OfficeOpenXml.Style.ExcelHorizontalAlignment]::Left
+
+    Close-ExcelPackage -ExcelPackage $Package
+}
+
 function Export-ExcelWorkbook
 {
     param(
@@ -479,6 +529,12 @@ function Export-ExcelWorkbook
 
     foreach ($Sheet in @($Sheets))
     {
+        if (($Sheet.Name -eq 'RunStatistics') -and (@($Sheet.Rows).Count -gt 0))
+        {
+            Export-RunStatisticsSheet -Path $Path -Rows @($Sheet.Rows)
+            continue
+        }
+
         $SheetRows = @($Sheet.Rows)
         $TextCells = @()
 
@@ -1514,10 +1570,12 @@ if ($ExcelOutput)
     $WorkbookName = "$($FileNamePrefix)GPOCompareHtml.xlsx"
     $WorkbookPath = Join-Path $OutputFolder $WorkbookName
 
-    # Worksheets in the same order as the report list above.
+    # RunStatistics first, then the other worksheets in the same order as the
+    # report list above.
     $OrderedSheets = [System.Collections.ArrayList]::new()
+    $SheetOrder    = @('RunStatistics.csv') + @($ExpectedReports | Where-Object { $_ -ne 'RunStatistics.csv' })
 
-    foreach ($Report in $ExpectedReports)
+    foreach ($Report in $SheetOrder)
     {
         $SheetName = [System.IO.Path]::GetFileNameWithoutExtension($Report)
 

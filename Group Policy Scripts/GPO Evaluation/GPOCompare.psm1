@@ -1,8 +1,8 @@
 #==========================================================
-# Version 3.4
+# Version 4.0
 #
 # Changelog:
-#   3.4 - No changes to this module. Version kept in lockstep with
+#   4.0 - No changes to this module. Version kept in lockstep with
 #         Compare-GPOXml.ps1 (-ExcelOutput workbook added).
 #   3.3 - No changes to this module. Version kept in lockstep with
 #         Compare-GPOXml.ps1 (output file name prefix added).
