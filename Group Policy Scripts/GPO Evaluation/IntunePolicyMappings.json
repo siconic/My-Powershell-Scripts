@@ -1746,7 +1746,21 @@
                          "categoryPath":  "Local Policies/User Rights Assignment",
                          "status":  "Mapped",
                          "intuneSetting":  "User rights",
-                         "intuneSubSetting":  "Adjust memory quotas for a process",
+                         "intuneSubSetting":  "Change system time",
+                         "sources":  [
+                                         "IntunePolicyMappings.json"
+                                     ],
+                         "alternates":  [
+
+                                        ]
+                     },
+                     {
+                         "class":  "Computer",
+                         "policy":  "Modify an object label",
+                         "categoryPath":  "Local Policies/User Rights Assignment",
+                         "status":  "Mapped",
+                         "intuneSetting":  "User rights",
+                         "intuneSubSetting":  "Modify object label",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
