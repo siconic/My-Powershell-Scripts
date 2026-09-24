@@ -430,7 +430,7 @@
                          "categoryPath":  "Advanced Audit Configuration > Policy Change",
                          "status":  "Mapped",
                          "intuneSetting":  "Auditing",
-                         "intuneSubSetting":  "Audit autherication Policy change",
+                         "intuneSubSetting":  "Audit Authorization Policy change",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
@@ -500,7 +500,7 @@
                          "categoryPath":  "Advanced Audit Configuration > System",
                          "status":  "Mapped",
                          "intuneSetting":  "Auditing",
-                         "intuneSubSetting":  "Account logon audit other account logon events",
+                         "intuneSubSetting":  "System Audit Other System Events",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
