@@ -1070,7 +1070,91 @@
                      },
                      {
                          "class":  "Computer",
-                         "policy":  "Network access: Sharing and security model for local accounts",
+                         "policy":  "Network security: Restrict NTLM: Audit Incoming NTLM Traffic",
+                         "categoryPath":  "Local Policies/Security Options > Network Access",
+                         "status":  "Mapped",
+                         "intuneSetting":  "Local Policies Security Options",
+                         "intuneSubSetting":  "Network Security Restrict NTLM Audit Incoming NTLM Traffic",
+                         "sources":  [
+                                         "IntunePolicyMappings.json"
+                                     ],
+                         "alternates":  [
+
+                                        ]
+                     },
+                     {
+                         "class":  "Computer",
+                         "policy":  "Network security: Restrict NTLM: Outgoing NTLM traffic to remote servers",
+                         "categoryPath":  "Local Policies/Security Options > Network Access",
+                         "status":  "Mapped",
+                         "intuneSetting":  "Local Policies Security Options",
+                         "intuneSubSetting":  "Network Security Restrict NTLM Outgoing NTLM Traffic To Remote Servers",
+                         "sources":  [
+                                         "IntunePolicyMappings.json"
+                                     ],
+                         "alternates":  [
+
+                                        ]
+                     },
+                     {
+                         "class":  "Computer",
+                         "policy":  "Network access: Restrict clients allowed to make remote calls to SAM",
+                         "categoryPath":  "Local Policies/Security Options > Network Access",
+                         "status":  "Mapped",
+                         "intuneSetting":  "Local Policies Security Options",
+                         "intuneSubSetting":  "Network access Restrict clients allowed to make remote calls to SAM",
+                         "sources":  [
+                                         "IntunePolicyMappings.json"
+                                     ],
+                         "alternates":  [
+
+                                        ]
+                     },
+                     {
+                         "class":  "Computer",
+                         "policy":  "Network access: Named Pipes that can be accessed anonymously",
+                         "categoryPath":  "Local Policies/Security Options > Network Access",
+                         "status":  "Mapped",
+                         "intuneSetting":  "Local Policies Security Options",
+                         "intuneSubSetting":  "Network access Named Pipes that can be accessed anonymously",
+                         "sources":  [
+                                         "IntunePolicyMappings.json"
+                                     ],
+                         "alternates":  [
+
+                                        ]
+                     },
+                     {
+                         "class":  "Computer",
+                         "policy":  "Network access: Shares that can be accessed anonymously",
+                         "categoryPath":  "Local Policies/Security Options > Network Access",
+                         "status":  "Mapped",
+                         "intuneSetting":  "Local Policies Security Options",
+                         "intuneSubSetting":  "Network access Shares that can be accessed anonymously",
+                         "sources":  [
+                                         "IntunePolicyMappings.json"
+                                     ],
+                         "alternates":  [
+
+                                        ]
+                     },
+                     {
+                         "class":  "Computer",
+                         "policy":  "Microsoft network server: Digitally sign communications (always)",
+                         "categoryPath":  "Local Policies/Security Options > Network Access",
+                         "status":  "Mapped",
+                         "intuneSetting":  "Local Policies Security Options",
+                         "intuneSubSetting":  "Microsoft network server Digitally sign communications (always)",
+                         "sources":  [
+                                         "IntunePolicyMappings.json"
+                                     ],
+                         "alternates":  [
+
+                                        ]
+                     },
+                     {
+                         "class":  "Computer",
+                         "policy":  "Enable auditing for all accounts",
                          "categoryPath":  "Local Policies/Security Options > Network Access",
                          "status":  "Mapped",
                          "intuneSetting":  "Local Policies Security Options",
@@ -1774,7 +1858,7 @@
                          "categoryPath":  "Local Policies/User Rights Assignment",
                          "status":  "Mapped",
                          "intuneSetting":  "User rights",
-                         "intuneSubSetting":  "Change the time zone",
+                         "intuneSubSetting":  "Change time zone",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
