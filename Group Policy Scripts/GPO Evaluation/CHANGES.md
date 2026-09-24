@@ -441,7 +441,10 @@ did and didn't catch.
     equivalent (the XML mapping of the same setting).
 ## Shared reference files
 
-- **DeprecatedPoliciesReference.md** - 1.0. Table format
+- **DeprecatedPoliciesReference.md** - 1.1. Adds a Microsoft Defender
+  Application Guard `Category` row (removed from Windows 11 24H2; matches
+  the Microsoft and older Windows Defender category names) and updates the
+  version line to the current script versions. 1.0: table format
   (Technology/MatchType/Pattern/Status/Replacement/CategoryFilter), read by
   both toolsets.
 - **intunemapping.json** - schemaVersion 1.2 (tracked separately, since
