@@ -93,21 +93,21 @@ Folder containing XML exports (Get-GPOReport -ReportType Xml).
 Folder where generated reports are written. Created if it does not exist.
 
 .PARAMETER ModulePath
-Path to GPOCompare.psm1. Default: next to this script.
+Path to GPOCompare.psm1. Default: the Modules folder.
 
 .PARAMETER IntuneMappingPath
-Path to the Intune mapping file. Default: intunemapping.json next to this
-script. The file is optional: if it does not exist a warning is shown and the
+Path to the Intune mapping file. Default: intunemapping.json in the Data
+folder. The file is optional: if it does not exist a warning is shown and the
 run continues (mapping columns show MappingFileMissing). A file that exists
 but cannot be parsed stops the run.
 
 .PARAMETER DeprecatedReferencePath
-Path to DeprecatedPoliciesReference.md. Default: next to this script. If it
+Path to DeprecatedPoliciesReference.md. Default: the Data folder. If it
 does not exist a warning is shown and no deprecated matches are reported.
 .PARAMETER PolicyMappingPath
 Path to IntunePolicyMappings.json, the GPO policy to Intune setting
 mappings imported from manual mapping workbooks by
-Import-IntuneMappingWorkbook.ps1. Default: next to this script. Optional:
+Import-IntuneMappingWorkbook.ps1. Default: the Data folder. Optional:
 if missing, a note is shown and only the general rules in the Intune
 mapping file are used. A policy found in this file is mapped from it
 first (MappingStatus Mapped or NoIntuneEquivalent, Confidence High); other
@@ -125,8 +125,8 @@ in ParsedSettings and the comparison reports; RunStatistics shows how many
 were excluded (ExcludedFromMigration).
 
 .PARAMETER ExclusionPath
-Path to the exclusion file. Default: IntuneMigrationExclusions.json next
-to this script. Each entry has a name, "enabled" (true or false, to turn
+Path to the exclusion file. Default: IntuneMigrationExclusions.json in
+the Data folder. Each entry has a name, "enabled" (true or false, to turn
 the entry on or off), a class (* = any, Computer, User) and wildcard
 patterns matched against "Extension / Category / SettingName" (case
 ignored). If the file is missing, a warning is shown and nothing is
@@ -167,7 +167,7 @@ Excel cell limit) is cut to that length in the workbook, with a warning.
 
 .NOTES
 Author:  Siconic
-Version: 4.0
+Version: 5.0
 
 Versioning: MAJOR bumps mean restructured logic, a changed CSV/report
 schema (something that could break a workflow built on the old output), or
@@ -176,6 +176,9 @@ and small additions that don't change existing columns or behavior.
 GPOCompare.psm1 is versioned in lockstep with this script, since the two are always used together.
 
 Changelog:
+  5.0 - Files moved into Scripts, Modules, Data and Config folders; default
+        paths point to the new folders. New launcher Start-GPOToolkit.ps1. Parameters and output
+        are unchanged.
   4.0 - Excel output. New -OutputFormat parameter (CSV or Excel); if it
         is not given, the script asks. Excel writes one workbook,
         GPOCompareXml.xlsx, with one worksheet per report and no CSV
@@ -245,15 +248,15 @@ param(
     [Parameter(Mandatory)]
     [string]$OutputFolder,
 
-    [string]$ModulePath = (Join-Path $PSScriptRoot "GPOCompare.psm1"),
+    [string]$ModulePath = (Join-Path (Split-Path $PSScriptRoot -Parent) "Modules\GPOCompare.psm1"),
 
-    [string]$IntuneMappingPath = (Join-Path $PSScriptRoot "intunemapping.json"),
+    [string]$IntuneMappingPath = (Join-Path (Split-Path $PSScriptRoot -Parent) "Data\intunemapping.json"),
 
-    [string]$DeprecatedReferencePath = (Join-Path $PSScriptRoot "DeprecatedPoliciesReference.md"),
+    [string]$DeprecatedReferencePath = (Join-Path (Split-Path $PSScriptRoot -Parent) "Data\DeprecatedPoliciesReference.md"),
 
-    [string]$PolicyMappingPath = (Join-Path $PSScriptRoot "IntunePolicyMappings.json"),
+    [string]$PolicyMappingPath = (Join-Path (Split-Path $PSScriptRoot -Parent) "Data\IntunePolicyMappings.json"),
 
-    [string]$ExclusionPath = (Join-Path $PSScriptRoot "IntuneMigrationExclusions.json"),
+    [string]$ExclusionPath = (Join-Path (Split-Path $PSScriptRoot -Parent) "Data\IntuneMigrationExclusions.json"),
 
     [string]$FilePrefix,
 

@@ -104,13 +104,15 @@ Text added to the start of every proposed policy name, for example
 
 .NOTES
 Author:  Siconic
-Version: 1.0
+Version: 2.0
 
 Needs the ImportExcel module; if it is not installed, the script installs
 it for the current user from the PowerShell Gallery. Excel itself is not
 needed.
 
 Changelog:
+  2.0 - Moved into the Scripts folder (it uses no other file). Parameters
+        and output are unchanged. New launcher Start-GPOToolkit.ps1.
   1.0 - Initial version.
 #>
 

@@ -80,8 +80,8 @@ One or more workbook files (.xlsx) or folders. For a folder, every .xlsx
 file in it is read, in name order.
 
 .PARAMETER MappingPath
-The mapping file to write. Default: IntunePolicyMappings.json next to
-this script, or IntunePolicyMappings.Internal.json with
+The mapping file to write. Default: IntunePolicyMappings.json in the Data
+folder, or IntunePolicyMappings.Internal.json in the Config folder with
 -KeepSensitiveData.
 
 .PARAMETER KeepSensitiveData
@@ -110,7 +110,7 @@ only with -KeepSensitiveData.
 Local file of organization-specific terms to replace, one per line:
 "term" (replaced with <ORG>) or "term=placeholder". Lines starting with #
 are ignored. Whole words only, case ignored. Default:
-IntuneMappingRedactions.txt next to this script. Optional; without it
+IntuneMappingRedactions.txt in the Config folder. Optional; without it
 only the built-in patterns are redacted. Keep this file out of the
 repository.
 
@@ -122,16 +122,20 @@ repository.
 
 .EXAMPLE
 .\Import-IntuneMappingWorkbook.ps1 -Path "C:\GPOProject\Mappings" -Rebuild -KeepSensitiveData
-.\Compare-GPOHtml.ps1 -HtmlFolder "C:\GPOProject\HTML" -OutputFolder "C:\GPOProject\Output" -PolicyMappingPath ".\IntunePolicyMappings.Internal.json"
+.\Compare-GPOHtml.ps1 -HtmlFolder "C:\GPOProject\HTML" -OutputFolder "C:\GPOProject\Output" -PolicyMappingPath "..\Config\IntunePolicyMappings.Internal.json"
 
 .NOTES
 Author:  Siconic
-Version: 1.0
+Version: 2.0
 
 Needs the ImportExcel module (Install-Module ImportExcel -Scope
 CurrentUser). Excel itself is not needed.
 
 Changelog:
+  2.0 - Moved into the Scripts folder. Default output: Data\
+        IntunePolicyMappings.json, or Config\IntunePolicyMappings.Internal.json
+        with -KeepSensitiveData; redactions from Config\. New launcher
+        Start-GPOToolkit.ps1.
   1.0 - Initial version.
 #>
 
@@ -148,7 +152,7 @@ param(
 
     [string]$ReportPath,
 
-    [string]$RedactionPath = (Join-Path $PSScriptRoot "IntuneMappingRedactions.txt")
+    [string]$RedactionPath = (Join-Path (Split-Path $PSScriptRoot -Parent) "Config\IntuneMappingRedactions.txt")
 )
 
 $ErrorActionPreference = "Stop"
@@ -169,11 +173,11 @@ if ([string]::IsNullOrWhiteSpace($MappingPath))
 {
     if ($Scrubbed)
     {
-        $MappingPath = Join-Path $PSScriptRoot "IntunePolicyMappings.json"
+        $MappingPath = Join-Path (Split-Path $PSScriptRoot -Parent) "Data\IntunePolicyMappings.json"
     }
     else
     {
-        $MappingPath = Join-Path $PSScriptRoot "IntunePolicyMappings.Internal.json"
+        $MappingPath = Join-Path (Split-Path $PSScriptRoot -Parent) "Config\IntunePolicyMappings.Internal.json"
     }
 }
 

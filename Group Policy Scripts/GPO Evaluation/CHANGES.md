@@ -16,7 +16,41 @@ validated by re-implementing the same DOM-walk algorithm in Python against
 three real gpresult /h reports - see that toolset's changelog for what that
 did and didn't catch.
 
-## XML toolset (Compare-GPOXml.ps1 + GPOCompare.psm1) - current: 4.0
+## Folder layout and launcher (Start-GPOToolkit.ps1) - current: 1.0
+
+- **1.0** - The files are now in folders: `Scripts` (the five scripts),
+  `Modules` (the three modules), `Data` (DeprecatedPoliciesReference.md,
+  intunemapping.json, IntunePolicyMappings.json,
+  IntuneMigrationExclusions.json) and `Config` (the example configuration
+  files, and the local-only GpoRoles.csv, ConsolidationRules.json,
+  IntuneMappingRedactions.txt and IntunePolicyMappings.Internal.json). A
+  committed `.gitignore` keeps the four local-only Config files out of the
+  repository. New `Start-GPOToolkit.ps1` at the top: a console menu with
+  six actions (compare XML, compare HTML, Intune policy plan, GPO
+  consolidation plan, import mapping workbooks, check the toolkit files).
+  It asks only for the inputs each script needs, shows the equivalent
+  direct command, offers the folders used earlier in the session as
+  defaults, offers to copy the Config example files when they are missing,
+  and returns to the menu after an error. Every script can still be run
+  directly with the same parameters; only their location changed, which is
+  why every script gets a MAJOR version. See README.md.
+  Tested in Windows PowerShell 5.1 through Start-GPOToolkit.ps1 with answers given on standard input
+  All six actions were run. Actions 1 and 2 compared the XML exports
+  and GPResult reports of three sites (Excel output). Action 3 built an
+  Intune policy plan from the XML compare workbook. Action 4 built the GPO
+  consolidation plan (same counts as the 1.0 acceptance run, except one
+  more "ready" setting from the updated IntunePolicyMappings.json).
+  Action 5 imported one mapping workbook into Data\IntunePolicyMappings.json
+  (the file was restored afterwards). Action 6 listed every file as found.
+  An action whose script stops with an error (HTML reports with no
+  settings) showed the message and returned to the menu.
+
+## XML toolset (Compare-GPOXml.ps1 + GPOCompare.psm1) - current: 5.0
+
+- **5.0** - Moved to `Scripts\Compare-GPOXml.ps1` and
+  `Modules\GPOCompare.psm1`. Default paths now point to `Modules` and
+  `Data`. Parameters and output are unchanged. No module changes. Can be
+  run from `Start-GPOToolkit.ps1` (action 1).
 
 - **4.0** - Excel output (MAJOR: a new output format), the same as HTML
   2.0: new `-OutputFormat CSV|Excel` parameter with a question when it is
@@ -76,7 +110,12 @@ did and didn't catch.
   mapping and deprecated-policy matching added; module path, encoding, and
   `-LiteralPath` fixes; duplicate/dead function definitions removed.
 
-## HTML toolset (Compare-GPOHtml.ps1 + GPOCompareHtml.psm1) - current: 2.0
+## HTML toolset (Compare-GPOHtml.ps1 + GPOCompareHtml.psm1) - current: 3.0
+
+- **3.0** - Moved to `Scripts\Compare-GPOHtml.ps1` and
+  `Modules\GPOCompareHtml.psm1`. Default paths now point to `Modules` and
+  `Data`. Parameters and output are unchanged. No module changes. Can be
+  run from `Start-GPOToolkit.ps1` (action 2).
 
 - **2.0** - Excel output (MAJOR: a new output format). New
   `-OutputFormat` parameter, `CSV` or `Excel`. If it is not given, the
@@ -279,7 +318,11 @@ did and didn't catch.
   Unclassified) rather than parsed, since their per-field layout doesn't
   fit the generic table handlers.
 
-## Intune policy plan (New-IntunePolicyPlan.ps1) - current: 1.0
+## Intune policy plan (New-IntunePolicyPlan.ps1) - current: 2.0
+
+- **2.0** - Moved to `Scripts\New-IntunePolicyPlan.ps1`. It uses no other
+  file, so nothing else changed. Can be run from `Start-GPOToolkit.ps1`
+  (action 3).
 
 - **1.0** - New script. Reads the output of Compare-GPOXml.ps1 or
   Compare-GPOHtml.ps1 (IntuneMigrationCandidates, FirewallRules and
@@ -339,7 +382,13 @@ did and didn't catch.
     `-FilePrefix`). Checked in Excel with short, long and colliding GPO
     names: worksheet names within 31 characters, every Summary link
     resolved, "Back to Summary" returned. Not yet run on real GPO exports.
-## Intune mapping import (Import-IntuneMappingWorkbook.ps1) - current: 1.0
+## Intune mapping import (Import-IntuneMappingWorkbook.ps1) - current: 2.0
+
+- **2.0** - Moved to `Scripts\Import-IntuneMappingWorkbook.ps1`. Writes
+  `Data\IntunePolicyMappings.json` by default, or
+  `Config\IntunePolicyMappings.Internal.json` with `-KeepSensitiveData`;
+  reads redactions from `Config\IntuneMappingRedactions.txt`. Parameters
+  are unchanged. Can be run from `Start-GPOToolkit.ps1` (action 5).
 
 - **1.0** - New script. Reads manual GPO-to-Intune mapping workbooks
   (.xlsx files or folders) and writes `IntunePolicyMappings.json`, which
@@ -379,7 +428,14 @@ did and didn't catch.
   written differently). A scan of the written file found no domain,
   account, URL, IP or email address, and no organization term.
 
-## GPO consolidation plan (New-GpoConsolidationPlan.ps1 + GPOConsolidation.psm1) - current: 1.0
+## GPO consolidation plan (New-GpoConsolidationPlan.ps1 + GPOConsolidation.psm1) - current: 2.0
+
+- **2.0** - Moved to `Scripts\New-GpoConsolidationPlan.ps1` and
+  `Modules\GPOConsolidation.psm1`. Reads `Config\GpoRoles.csv`,
+  `Config\ConsolidationRules.json` and `Data\DeprecatedPoliciesReference.md`
+  by default. Parameters and output are unchanged. No module changes. Can
+  be run from `Start-GPOToolkit.ps1` (action 4), which offers to copy the
+  example files when the Config files are missing.
 
 - **1.0** - First version. Turns Compare-GPOXml.ps1 output (workbook or
   CSV folder) into a layered GPO consolidation plan workbook: Summary,

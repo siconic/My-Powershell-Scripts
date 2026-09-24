@@ -26,9 +26,11 @@
 # COM interop calls in particular should be treated as the highest-risk
 # part of this file until you run it.
 #
-# Version 2.0
+# Version 3.0
 #
 # Changelog:
+#   3.0 - No changes to this module. Moved into the Modules folder;
+#         version kept in lockstep with Compare-GPOHtml.ps1.
 #   2.0 - No changes to this module. Version kept in lockstep with
 #         Compare-GPOHtml.ps1 (Excel workbook output added).
 #   1.10 - No changes to this module. Version kept in lockstep with
