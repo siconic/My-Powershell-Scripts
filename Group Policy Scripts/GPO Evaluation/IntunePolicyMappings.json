@@ -1632,9 +1632,9 @@
                          "class":  "Computer",
                          "policy":  "Access Credential Manager as a trusted caller",
                          "categoryPath":  "Local Policies/User Rights Assignment",
-                         "status":  "NoIntuneEquivalent",
-                         "intuneSetting":  "",
-                         "intuneSubSetting":  "",
+                         "status":  "Mapped",
+                         "intuneSetting":  "User rights",
+                         "intuneSubSetting":  "Access Credential Manager as a trusted caller",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
@@ -1660,9 +1660,9 @@
                          "class":  "Computer",
                          "policy":  "Act as part of the operating system",
                          "categoryPath":  "Local Policies/User Rights Assignment",
-                         "status":  "NoIntuneEquivalent",
-                         "intuneSetting":  "",
-                         "intuneSubSetting":  "",
+                         "status":  "Mapped",
+                         "intuneSetting":  "User rights",
+                         "intuneSubSetting":  "Act as part of the operating system",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
@@ -1690,7 +1690,7 @@
                          "categoryPath":  "Local Policies/User Rights Assignment",
                          "status":  "Mapped",
                          "intuneSetting":  "User rights",
-                         "intuneSubSetting":  "Adjust memory quotas for a process",
+                         "intuneSubSetting":  "Allow local log on",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
@@ -1714,11 +1714,11 @@
                      },
                      {
                          "class":  "Computer",
-                         "policy":  "Back up files and directories",
+                         "policy":  "Backup files and directories",
                          "categoryPath":  "Local Policies/User Rights Assignment",
                          "status":  "Mapped",
                          "intuneSetting":  "User rights",
-                         "intuneSubSetting":  "Adjust memory quotas for a process",
+                         "intuneSubSetting":  "Backup files and directories",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
@@ -1732,7 +1732,7 @@
                          "categoryPath":  "Local Policies/User Rights Assignment",
                          "status":  "Mapped",
                          "intuneSetting":  "User rights",
-                         "intuneSubSetting":  "Adjust memory quotas for a process",
+                         "intuneSubSetting":  "Bypass traverse checking",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
@@ -1774,7 +1774,7 @@
                          "categoryPath":  "Local Policies/User Rights Assignment",
                          "status":  "Mapped",
                          "intuneSetting":  "User rights",
-                         "intuneSubSetting":  "Adjust memory quotas for a process",
+                         "intuneSubSetting":  "Change the time zone",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
@@ -1784,11 +1784,11 @@
                      },
                      {
                          "class":  "Computer",
-                         "policy":  "Create a pagefile",
+                         "policy":  "Create a page file",
                          "categoryPath":  "Local Policies/User Rights Assignment",
                          "status":  "Mapped",
                          "intuneSetting":  "User rights",
-                         "intuneSubSetting":  "Adjust memory quotas for a process",
+                         "intuneSubSetting":  "Create page file",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
@@ -1800,9 +1800,9 @@
                          "class":  "Computer",
                          "policy":  "Create a token object",
                          "categoryPath":  "Local Policies/User Rights Assignment",
-                         "status":  "NoIntuneEquivalent",
-                         "intuneSetting":  "",
-                         "intuneSubSetting":  "",
+                         "status":  "Mapped",
+                         "intuneSetting":  "User Rights",
+                         "intuneSubSetting":  "Create Token",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
@@ -1828,9 +1828,9 @@
                          "class":  "Computer",
                          "policy":  "Create permanent shared objects",
                          "categoryPath":  "Local Policies/User Rights Assignment",
-                         "status":  "NoIntuneEquivalent",
-                         "intuneSetting":  "",
-                         "intuneSubSetting":  "",
+                         "status":  "Mapped",
+                         "intuneSetting":  "User rights",
+                         "intuneSubSetting":  "Create permanent shared objects",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
@@ -1940,9 +1940,9 @@
                          "class":  "Computer",
                          "policy":  "Enable computer and user accounts to be trusted for delegation",
                          "categoryPath":  "Local Policies/User Rights Assignment",
-                         "status":  "NoIntuneEquivalent",
-                         "intuneSetting":  "",
-                         "intuneSubSetting":  "",
+                         "status":  "Mapped",
+                         "intuneSetting":  "User Rights",
+                         "intuneSubSetting":  "Enable Delegation",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
@@ -2038,9 +2038,9 @@
                          "class":  "Computer",
                          "policy":  "Lock pages in memory",
                          "categoryPath":  "Local Policies/User Rights Assignment",
-                         "status":  "NoIntuneEquivalent",
-                         "intuneSetting":  "",
-                         "intuneSubSetting":  "",
+                         "status":  "Mapped",
+                         "intuneSetting":  "User rights",
+                         "intuneSubSetting":  "Lock Memory",
                          "sources":  [
                                          "IntunePolicyMappings.json"
                                      ],
