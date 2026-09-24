@@ -1,0 +1,80 @@
+{
+  "schemaVersion": "1.0",
+  "ReferenceSite": "SiteC",
+  "LayerNames": {
+    "Baseline": "Windows 11 Baseline",
+    "Hardening": "Hardening",
+    "BrandingPrefix": "Branding - "
+  },
+  "ValueOverrides": [
+    {
+      "Setting": "MinimumPasswordAge",
+      "Value": "1",
+      "Reason": "1 day stops users cycling through the password history to reuse an old password (CIS L1)."
+    },
+    {
+      "Setting": "Interactive logon: Prompt user to change password before expiration",
+      "Value": "14",
+      "Reason": "All sites apply 0 days today (no warning). The Hardening GPO already intended 14."
+    }
+  ],
+  "BrandingSettings": [
+    "Interactive logon: Message title for users attempting to log on",
+    "Interactive logon: Message text for users attempting to log on",
+    "Desktop Wallpaper",
+    "Configure the home page URL",
+    "Configure the new tab page URL",
+    "Sites to open when the browser starts"
+  ],
+  "IntuneExclusions": [
+    { "Area": "LAPS", "CategoryPatterns": [ "LAPS", "System/LAPS", "*\\LAPS" ], "NamePatterns": [], "ExtensionPatterns": [] },
+    { "Area": "BitLocker", "CategoryPatterns": [ "*BitLocker*" ], "NamePatterns": [], "ExtensionPatterns": [] },
+    { "Area": "Web Browser", "CategoryPatterns": [ "Microsoft Edge*", "*Internet Explorer*" ], "NamePatterns": [], "ExtensionPatterns": [] },
+    { "Area": "SSL", "CategoryPatterns": [ "Public Key Policies*" ], "NamePatterns": [], "ExtensionPatterns": [ "Public Key Policies" ] },
+    { "Area": "Wireless Settings", "CategoryPatterns": [ "*Wireless Network*", "*WLAN*" ], "NamePatterns": [], "ExtensionPatterns": [ "Wireless Network Policies" ] },
+    { "Area": "Printers", "CategoryPatterns": [ "Printers" ], "NamePatterns": [ "*print*" ], "ExtensionPatterns": [] },
+    { "Area": "Registry Settings", "CategoryPatterns": [], "NamePatterns": [ "MACHINE\\*" ], "ExtensionPatterns": [ "Registry Settings" ] }
+  ],
+  "IntuneKeepList": [
+    "Point and Print Restrictions",
+    "Limits print driver installation to Administrators",
+    "Configure RPC packet level privacy setting for incoming connections",
+    "Configure RPC connection settings",
+    "Configure RPC listener settings",
+    "Configure RPC over TCP port",
+    "Configure Redirection Guard",
+    "Manage processing of Queue-specific files",
+    "Allow Print Spooler to accept client connections"
+  ],
+  "IntuneKeepListNote": "PrintNightmare mitigation: kept although {Area} is excluded.",
+  "RetireRules": [
+    {
+      "Reason": "Deprecated: Internet Explorer / Active Desktop",
+      "Roles": [ "Branding", "DomainRoot" ],
+      "CategoryPatterns": [ "*Internet Explorer*" ],
+      "NamePatterns": [ "*Active Desktop*" ],
+      "Replacement": "Edge policies",
+      "Notes": "IE11 is retired on Windows 11."
+    },
+    {
+      "Reason": "Deprecated: Legacy Edge (EdgeHTML)",
+      "Roles": [ "Branding", "DomainRoot" ],
+      "CategoryPatterns": [ "Windows Components/Microsoft Edge" ],
+      "Replacement": "Microsoft Edge home page / startup policies",
+      "Notes": "Legacy Edge is removed from Windows 11; the Chromium Edge policies replace it."
+    },
+    {
+      "Reason": "Legacy / duplicate",
+      "Roles": [ "Branding" ],
+      "CategoryPatterns": [ "Printers" ],
+      "Replacement": "",
+      "Notes": "Printer publishing/browsing and Internet printing are not needed on Windows 11 clients."
+    }
+  ],
+  "ReviewNotes": [
+    {
+      "Setting": "Allow Remote Shell Access",
+      "Note": "Enables WinRM remote shell on every workstation. Keep only if your tooling needs it."
+    }
+  ]
+}

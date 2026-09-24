@@ -379,6 +379,66 @@ did and didn't catch.
   written differently). A scan of the written file found no domain,
   account, URL, IP or email address, and no organization term.
 
+## GPO consolidation plan (New-GpoConsolidationPlan.ps1 + GPOConsolidation.psm1) - current: 1.0
+
+- **1.0** - First version. Turns Compare-GPOXml.ps1 output (workbook or
+  CSV folder) into a layered GPO consolidation plan workbook: Summary,
+  Intune Plan, Baseline, Baseline FW Rules, Hardening, one
+  "Branding - <Site>" sheet per site, Decisions, Retired & Moved, and Not
+  Migrated to Intune. Groups settings by GPO role, which comes from
+  `GpoRoles.csv` (GPOName, Site, Role, Precedence; roles Baseline,
+  Hardening, Branding, DomainRoot, Separate, Retire). The decisions not
+  in the data come from `ConsolidationRules.json` (ReferenceSite,
+  ValueOverrides, BrandingSettings, IntuneExclusions, IntuneKeepList,
+  RetireRules, ReviewNotes). The repo has `GpoRoles.example.csv` and
+  `ConsolidationRules.example.json` with placeholder names; the real
+  files stay local.
+  Compare-GPOHtml.ps1 output can be given as well. It is used only for
+  GPOs that have no XML export, with a warning for Role=Baseline GPOs
+  (GPResult shows only winning settings and no Administrative Template
+  options). Settings inside a gpresult section with a "Winning GPO" row
+  (wireless, file system) get that GPO name instead of `<Unknown>`. A
+  setting read from HTML uses the XML mapping of the same setting when
+  one exists.
+  Normalization: `qN:` prefixes removed; Se* rights and account policy
+  keys become display names; user rights are sorted; Administrative
+  Template values are cleaned to "Enabled; Option=value". Firewall
+  profile keys are derived to the Defender Firewall CSP ("Mapped
+  (derived)"). Suspect mappings are marked "Yes – fix mapping":
+  one Intune setting used for several settings where one of them has
+  that name, audit settings mapped to another subcategory, and a
+  profile mapped to another profile's setting. Deprecated policies come
+  from DeprecatedPoliciesReference.md through GPOCompare.psm1.
+  Summary and Intune Plan counts are Excel formulas (COUNTA / COUNTIFS).
+  New-IntunePolicyPlan.ps1 and the compare scripts are unchanged.
+  Run in Windows PowerShell 5.1 against three sites' real data (two
+  Compare-GPOXml workbooks and one Compare-GPOHtml CSV folder) and
+  compared with a hand-built reference workbook. Results (reference in
+  brackets):
+  - Baseline 342 [343]. "Turn on convenience PIN sign-in" is retired,
+    because DeprecatedPoliciesReference.md lists it.
+  - Baseline FW Rules 197 [194], and 0 [3] Hardening firewall rules. The
+    Windows 11 GPOs contain the same 3 rules enabled, so the Hardening
+    copies are duplicates.
+  - Hardening 28 [28]. Branding 3 per site [3].
+  - Decisions 29 [24]. Extra rows: the separate lockout duration and
+    reset counter rows, 2 domain-root security option differences, and
+    one row per Separate GPO. The reference has hand-written rows.
+  - Retired & Moved 294 [295]. Deprecated settings in Hardening are
+    listed as deprecated, not "Moved to baseline" (3). A registry path
+    that differs only in letter case counts as the same setting (1).
+    "System/LAPS Password Settings" is Windows LAPS, not legacy LAPS (1).
+    The reference's 4 domain-root rows per site (event log sizes, XP
+    wireless) come from GPResult HTML, which is not used when an XML
+    export exists; the XML export does not have them. The IE settings in
+    the domain-root GPOs are retired (3 per site).
+  - Not Migrated 101 [106]. Retired settings are not listed again (4
+    legacy LAPS rows). Two certificates whose names differ only in
+    letter case are one setting (1).
+  - Intune Plan 540 / 489 / 51 [541 / 491 / 50]. "Limits print driver
+    installation to Administrators" is mapped to another setting's name
+    and is marked "fix mapping". The domain-root wallpaper has no Intune
+    equivalent (the XML mapping of the same setting).
 ## Shared reference files
 
 - **DeprecatedPoliciesReference.md** - 1.0. Table format

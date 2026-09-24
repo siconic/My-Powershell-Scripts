@@ -1,0 +1,15 @@
+GPOName,Site,Role,Precedence
+SITEA- Default Policy,SiteA,Branding,1
+SITEA- Windows 11 Workstation Policy,SiteA,Baseline,2
+SITEA- Workstation Hardening Policy,SiteA,Hardening,3
+SITEA- Default Domain Policy,SiteA,DomainRoot,5
+SITEB- Default Policy,SiteB,Branding,1
+SITEB- Windows 11 Workstation Policy,SiteB,Baseline,2
+SITEB- Workstation Hardening Policy,SiteB,Hardening,3
+SITEB- Default Domain Policy,SiteB,DomainRoot,5
+Windows 11 Workstation Policy,SiteC,Baseline,2
+Default Domain Policy,SiteC,DomainRoot,9
+WSUS Client Policy,*,Retire,
+Certificate Distribution,*,Separate,
+BitLocker Policy,*,Separate,
+Corporate Wireless Policy,SiteC,Separate,
