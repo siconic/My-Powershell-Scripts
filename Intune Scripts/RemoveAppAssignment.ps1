@@ -1,113 +1,138 @@
 #------------------------------------------------------------------------------------
-# Script: RemoveAppAssigment.ps1
-# Author: Earl Estrada 
+# Script: RemoveAppAssignment.ps1
+# Author: Siconic
 # Date: 7/14/2025
-# Modified: 7/28/2025
-# Last Modified by: Earl Estrada
+# Modified: 9/29/2026
+# Last Modified by: Siconic
 #
-# Version: 1.0.3
+# Version: 2.0.0
 #
-# Pre-Requisits: Requires MS Graph. To install: Install-Module Microsoft.Graph -Force
+# Pre-Requisites: Requires MS Graph. To install: Install-Module Microsoft.Graph -Force
 #
-# Usage: To be used with the AppAssigmentAutomation script if rollback is necessary.
-# 
+# Usage: Rolls back assignments made by IntuneAppAssignmentAutomation.ps1. The input
+#        is that script's output CSV. Only rows whose Assigned value starts with
+#        "Assigned" (for example "Assigned - required") and that have an AppID and an
+#        AssignmentID are removed. Assignments that the other script's removal mode
+#        deleted (column RemovedAssignmentID) are not restored by this script.
+#
 # 1.0.0 - Initial Creation
 # 1.0.1 - Added Logging via CSV Output and user CSV Input
 # 1.0.2 - Added Try/Catch block with error collection
 # 1.0.3 - Added Script information and versioning
+# 2.0.0 - Rows written by IntuneAppAssignmentAutomation.ps1 ("Assigned - <intent>")
+#         are now recognized; before, no row matched and nothing was removed.
+#         Removal errors are now caught; before, the status was "Removed" even when
+#         the removal failed. Output column ScopeTag renamed to Owner; the input
+#         accepts Owner or the old ScopeTag column. Y/N prompts ask again on other
+#         answers. The CSV path may be given with quotes.
 #-------------------------------------------------------------------------------------
-$scriptver = "103"
+$scriptver = "200"
 
 #Tenant ID Information
 $TenantId = ""
 $ClientId = ""
-Connect-MgGraph -NoWelcome -TenantId $TenantId -ClientID $ClientID 
 
-# initialize array
-$results = @() 
+Function Read-YesNo {
+    param(
+        [string]$Prompt,
+        [bool]$Default,
+        [string]$Color = 'Yellow'
+    )
+    while ($true) {
+        Write-Host $Prompt -ForegroundColor $Color -NoNewline
+        $answer = "$(Read-Host)".Trim()
+        if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+        if ($answer -eq 'y' -or $answer -eq 'yes') { return $true }
+        if ($answer -eq 'n' -or $answer -eq 'no') { return $false }
+        Write-Host "Please answer Y or N." -ForegroundColor Red
+    }
+}
+
+Connect-MgGraph -NoWelcome -TenantId $TenantId -ClientID $ClientID
+
+# Result rows for the output CSV
+$results = [System.Collections.Generic.List[object]]::new()
 
 # Path to your CSV file
-# $csvFilePath = "C:\Temp\AppAssignments.csv"
-$csvFilePath = Read-Host "Enter Rollback CSV path (without quotes)"
+Write-Host "Enter Rollback CSV path: " -ForegroundColor Cyan -NoNewline
+$csvFilePath = "$(Read-Host)".Trim().Trim('"')
 
 # Import the CSV data
-$AppList = Import-Csv -Path $CsvFilePath
+$AppList = @(Import-Csv -Path $csvFilePath -ErrorAction Stop)
 
 # Main Body
 # Loop through CSV
-foreach ($remove in $Applist) {
+foreach ($remove in $AppList) {
     $AppName = $remove.AppName
-    $AppID = $remove.AppID
+    $AppID = "$($remove.AppID)".Trim()
     $GroupName = $remove.GroupName
     $GroupID = $remove.GroupID
-    $OwnerID = $remove.ScopeTag
-    $AppAssignment = $remove.AssignmentID
+    # Owner column since IntuneAppAssignmentAutomation.ps1 4.0.0, ScopeTag before
+    if ($remove.PSObject.Properties.Name -contains 'Owner') {
+        $OwnerID = $remove.Owner
+    }
+    else {
+        $OwnerID = $remove.ScopeTag
+    }
+    $AppAssignment = "$($remove.AssignmentID)".Trim()
     $ErrorMessage = ""
 
-    #Only runs if it finds a valid assignment
-    If ($remove.Assigned -eq "Assigned") {
+    # Only rows with an assignment that the assignment script created
+    If ("$($remove.Assigned)" -notlike 'Assigned*') {
+        Write-Host "`nApp: $($AppName), Group: $($GroupName) was not assigned by the script. Not removed." -ForegroundColor Magenta
+        $RemovalStatus = "Not Removed - Not Assigned"
+    }
+    ElseIf ([string]::IsNullOrWhiteSpace($AppID) -or [string]::IsNullOrWhiteSpace($AppAssignment)) {
+        Write-Host "`nApp: $($AppName), Group: $($GroupName) has no AppID or AssignmentID in the CSV. Not removed." -ForegroundColor Magenta
+        $RemovalStatus = "Not Removed - No AppID or AssignmentID"
+    }
+    Else {
         Write-Host "`nProcessing assignment removal for App: $($AppName), Group: $($GroupName)" -ForegroundColor Green
-        Write-Host "Are you sure you want to remove this assignment (Y/n)?" -ForegroundColor Yellow -NoNewline
-        $confirmRemoval = Read-Host
-        
-        if ([string]::IsNullOrWhiteSpace($confirmRemoval) -or $confirmRemoval -eq 'Y') {
+
+        if (Read-YesNo -Prompt "Are you sure you want to remove this assignment? (Y/n): " -Default $true) {
             Write-Host "Removing assignment $($GroupName) for App: $($AppName)" -ForegroundColor Green
             try {
-                Remove-MgDeviceAppManagementMobileAppAssignment -MobileAppId $AppID -MobileAppAssignmentId $AppAssignment -Confirm:$false -PassThru
+                Remove-MgDeviceAppManagementMobileAppAssignment -MobileAppId $AppID -MobileAppAssignmentId $AppAssignment -Confirm:$false -ErrorAction Stop
                 Write-Host "Assignment removed successfully." -ForegroundColor Cyan
                 $RemovalStatus = "Removed"
             }
             catch {
                 $ErrorMessage = "$($_.Exception.Message)"
-                Write-Error "Failed to remove mobile app assignment. Error: $ErrorMessage"
+                Write-Host "Failed to remove mobile app assignment. Error: $ErrorMessage" -ForegroundColor Red
                 $RemovalStatus = "Not Removed - Error"
             }
         }
-        
         Else {
-            Write-Host "`nNo app assignments for $($AppName) not removed." -ForegroundColor Magenta
+            Write-Host "Assignment for $($AppName) not removed." -ForegroundColor Magenta
             $RemovalStatus = "Not Removed - User Input"
         }
-
-        $obj = [PSCustomObject]@{
-            AppName = $appName
-            AppID = $appID
-            GroupName = $groupName
-            GroupID = $GroupID
-            ScopeTag = $ownerID
-            Removed = $RemovalStatus
-            Link = "https://intune.microsoft.com/#view/Microsoft_Intune_Apps/SettingsMenu/~/0/appId/$AppID"
-            ErrorMessage = $ErrorMessage
-        }
-	
-        $results += $obj # Adds objects to array
-
-        }
-    Else {
-        Write-Host "`nNo app assignments for $($AppName) not removed." -ForegroundColor Magenta
-        $RemovalStatus = "Not Removed - Not Assigned"
-        $obj = [PSCustomObject]@{
-            AppName = $appName
-            AppID = $appID
-            GroupName = $groupName
-            GroupID = $GroupID
-            ScopeTag = $ownerID
-            Removed = $RemovalStatus
-            Link = "https://intune.microsoft.com/#view/Microsoft_Intune_Apps/SettingsMenu/~/0/appId/$AppID"
-            ErrorMessage = $ErrorMessage
-        }
-	
-        $results += $obj # Adds objects to array
     }
+
+    $link = ""
+    if (-not [string]::IsNullOrWhiteSpace($AppID)) {
+        $link = "https://intune.microsoft.com/#view/Microsoft_Intune_Apps/SettingsMenu/~/0/appId/$($AppID)"
+    }
+
+    $results.Add([PSCustomObject]@{
+        AppName      = $AppName
+        AppID        = $AppID
+        GroupName    = $GroupName
+        GroupID      = $GroupID
+        Owner        = $OwnerID
+        Removed      = $RemovalStatus
+        Link         = $link
+        AssignmentID = $AppAssignment
+        ErrorMessage = $ErrorMessage
+    })
 }
-    
+
 $SV = "SV" + $scriptver
 $DateTS = (Get-Date).ToString("yyyyMMdd_HHmmss")
 $csvName = "AppRollback-" + $OwnerID + "-" + $DateTS + "-" + $SV +  ".csv"
 $csvPath = Join-Path -Path ([Environment]::GetFolderPath("MyDocuments")) -ChildPath $csvName
 
 $results | Export-CSV -Path $csvPath -NoTypeInformation
-Write-Host "Script execution completed."
+Write-Host "Script execution completed. Results written to $csvPath"
 
 # Disconnect from Microsoft Graph
 # Disconnect-MgGraph
