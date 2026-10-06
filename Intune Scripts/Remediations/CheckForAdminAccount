@@ -1,0 +1,7 @@
+$NewName  = ""
+
+if (Get-LocalUser -Name $NewName -ErrorAction SilentlyContinue) {
+    # Account already exists, nothing to rename or create
+    exit 0
+}
+Else {Write-Host "Account does not exist"}
