@@ -1,20 +1,16 @@
 # Renames the computer to the organization's naming standard:
-#   first 3 characters of the current hostname (or $HostnamePrefix) + up to 10 characters of the BIOS serial number
+#   first 3 characters of the current hostname (or HostnamePrefix) + up to 10 characters of the BIOS serial number
 # Run by the RenameHost scheduled task (as SYSTEM, shown to the user through ServiceUI.exe).
 # The task is disabled only after the rename has succeeded and the user has restarted,
 # or when the hostname already matches. After a failure the task stays enabled and tries again.
 
-# Organization name. Used in the restart message and for the C:\ProgramData\<OrgName> folder and must be
-# the same in Installer.ps1, RenameComputer.ps1, Uninstall.ps1 and detection.ps1.
-# Letters, digits, - and _ only.
-$OrgName = "COMPANY"
-
-# Set a fixed prefix (for example a site code) to use it instead of the first 3 characters of the current hostname.
-$HostnamePrefix = ""
+# Settings (OrgName, HostnamePrefix) are read from Settings.psd1 in the same folder as this script.
+# Installer.ps1 copies both files to C:\ProgramData\<OrgName>\RenameHost.
+# The log goes to the Log folder next to that folder: C:\ProgramData\<OrgName>\Log.
 
 $TaskName = "RenameHost"
-$LogFolder = "C:\ProgramData\$OrgName\Log"
-$LogPath = "$LogFolder\RenameInstall.log"
+$LogFolder = Join-Path (Split-Path $PSScriptRoot -Parent) "Log"
+$LogPath = Join-Path $LogFolder "RenameInstall.log"
 $RegistryPath = "HKLM:\SOFTWARE\Packages\HostRename"
 
 # Default names that must not be used as a prefix
@@ -68,7 +64,7 @@ function Get-TargetHostName
         {
             if ($CurrentName -match $Pattern)
             {
-                throw "Current hostname '$CurrentName' is a Windows default name. Set `$HostnamePrefix or rename the device manually."
+                throw "Current hostname '$CurrentName' is a Windows default name. Set HostnamePrefix in Settings.psd1 or rename the device manually."
             }
         }
 
@@ -139,6 +135,11 @@ Start-Transcript -Path $LogPath -Append | Out-Null
 
 try
 {
+    $Settings = Import-PowerShellDataFile -Path (Join-Path $PSScriptRoot "Settings.psd1") -ErrorAction Stop
+    $OrgName = $Settings.OrgName
+    $HostnamePrefix = $Settings.HostnamePrefix
+    Write-Output "Settings: OrgName '$OrgName', HostnamePrefix '$HostnamePrefix'"
+
     # Active name = name in use now. Pending name = name after the next restart.
     $ActiveName = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName" -ErrorAction Stop).ComputerName
     $PendingName = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName" -ErrorAction Stop).ComputerName
