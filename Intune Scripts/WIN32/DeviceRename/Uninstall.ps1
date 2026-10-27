@@ -1,8 +1,13 @@
 # Win32 app uninstall script: removes the RenameHost task, the installed files and the HostRename registry key.
-# The computer name is not changed back. The log file C:\ProgramData\COMPANY\Log\RenameInstall.log is kept.
+# The computer name is not changed back. The log file C:\ProgramData\<OrgName>\Log\RenameInstall.log is kept.
+
+# Organization name. Used for the C:\ProgramData\<OrgName> folder and must be
+# the same in Installer.ps1, RenameComputer.ps1, Uninstall.ps1 and detection.ps1.
+# Letters, digits, - and _ only.
+$OrgName = "COMPANY"
 
 $TaskName = "RenameHost"
-$InstallFolder = "C:\ProgramData\COMPANY\RenameHost"
+$InstallFolder = "C:\ProgramData\$OrgName\RenameHost"
 $RegistryPath = "HKLM:\SOFTWARE\Packages\HostRename"
 
 try

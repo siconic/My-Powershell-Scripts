@@ -2,13 +2,25 @@
 # Can be run again (reinstall): existing files and the existing task are replaced.
 # Exit 0 = success, Exit 1 = failure
 
-$InstallFolder = "C:\ProgramData\COMPANY\RenameHost"
-$LogFolder = "C:\ProgramData\COMPANY\Log"
-$LogPath = "C:\ProgramData\COMPANY\Log\RenameInstall.log"
+# Organization name. Used for the C:\ProgramData\<OrgName> folder and must be
+# the same in Installer.ps1, RenameComputer.ps1, Uninstall.ps1 and detection.ps1.
+# Letters, digits, - and _ only.
+$OrgName = "COMPANY"
+
+if ($OrgName -notmatch '^[A-Za-z0-9_-]+$')
+{
+    Write-Output "ERROR: `$OrgName '$OrgName' may contain only letters, digits, - and _."
+    exit 1
+}
+
+$BaseFolder = "C:\ProgramData\$OrgName"
+$InstallFolder = "$BaseFolder\RenameHost"
+$LogFolder = "$BaseFolder\Log"
+$LogPath = "$LogFolder\RenameInstall.log"
 $TaskName = "RenameHost"
 $Files = @("RenameHost.xml", "RenameComputer.ps1", "ServiceUI.exe")
 
-foreach ($Folder in @("C:\ProgramData\COMPANY", $InstallFolder, $LogFolder))
+foreach ($Folder in @($BaseFolder, $InstallFolder, $LogFolder))
 {
     if (!(Test-Path -Path $Folder))
     {
@@ -27,7 +39,8 @@ try
         Write-Output "Copied '$File' to '$InstallFolder'."
     }
 
-    $TaskXml = Get-Content (Join-Path $InstallFolder "RenameHost.xml") -Raw -ErrorAction Stop
+    # RenameHost.xml has the token __ORGNAME__ in its paths; it is replaced with $OrgName here
+    $TaskXml = (Get-Content (Join-Path $InstallFolder "RenameHost.xml") -Raw -ErrorAction Stop).Replace("__ORGNAME__", $OrgName)
     Register-ScheduledTask -Xml $TaskXml -TaskName $TaskName -TaskPath "\" -User "SYSTEM" -Force -ErrorAction Stop | Out-Null
     Write-Output "Scheduled task '$TaskName' registered."
 

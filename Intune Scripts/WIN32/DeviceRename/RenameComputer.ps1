@@ -1,17 +1,20 @@
-# Renames the computer to the COMPANY naming standard:
+# Renames the computer to the organization's naming standard:
 #   first 3 characters of the current hostname (or $HostnamePrefix) + up to 10 characters of the BIOS serial number
 # Run by the RenameHost scheduled task (as SYSTEM, shown to the user through ServiceUI.exe).
 # The task is disabled only after the rename has succeeded and the user has restarted,
 # or when the hostname already matches. After a failure the task stays enabled and tries again.
 
+# Organization name. Used in the restart message and for the C:\ProgramData\<OrgName> folder and must be
+# the same in Installer.ps1, RenameComputer.ps1, Uninstall.ps1 and detection.ps1.
+# Letters, digits, - and _ only.
 $OrgName = "COMPANY"
 
 # Set a fixed prefix (for example a site code) to use it instead of the first 3 characters of the current hostname.
 $HostnamePrefix = ""
 
 $TaskName = "RenameHost"
-$LogFolder = "C:\ProgramData\COMPANY\Log"
-$LogPath = "C:\ProgramData\COMPANY\Log\RenameInstall.log"
+$LogFolder = "C:\ProgramData\$OrgName\Log"
+$LogPath = "$LogFolder\RenameInstall.log"
 $RegistryPath = "HKLM:\SOFTWARE\Packages\HostRename"
 
 # Default names that must not be used as a prefix

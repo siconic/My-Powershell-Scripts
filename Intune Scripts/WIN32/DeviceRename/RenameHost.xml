@@ -3,7 +3,7 @@
   <RegistrationInfo>
     <Date>2025-06-23T17:38:05.0979715</Date>
     <Author>NT AUTHORITY\SELF</Author>
-    <Description>This Task Will rename the computer as per COMPANY standard hostnaming procedure</Description>
+    <Description>This Task Will rename the computer as per the __ORGNAME__ hostname standard</Description>
     <URI>\RenameHost</URI>
   </RegistrationInfo>
   <Triggers>
@@ -43,8 +43,8 @@
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\ProgramData\COMPANY\RenameHost\ServiceUI.exe</Command>
-      <Arguments>-Process:explorer.exe "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\ProgramData\COMPANY\RenameHost\RenameComputer.ps1"</Arguments>
+      <Command>C:\ProgramData\__ORGNAME__\RenameHost\ServiceUI.exe</Command>
+      <Arguments>-Process:explorer.exe "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\ProgramData\__ORGNAME__\RenameHost\RenameComputer.ps1"</Arguments>
     </Exec>
   </Actions>
 </Task>
