@@ -1,51 +1,45 @@
-# Check if the folder exists and create folder
+# Win32 app install script: copies the rename files and registers the RenameHost scheduled task.
+# Can be run again (reinstall): existing files and the existing task are replaced.
+# Exit 0 = success, Exit 1 = failure
 
-$Folders =@(
-        "C:\ProgramData\COMPANY"
-        "C:\ProgramData\COMPANY\RenameHost"
-        "C:\ProgramData\COMPANY\Log"
-        )
-
-         foreach ($LogFolder in $Folders)
-         {
-            if(!(Test-Path -Path $LogFolder))
-            {
-              New-Item -ItemType Directory -Path $LogFolder -Force | Out-Null
-              Write-Output "Folder '$LogFolder' created successfully."
-            }
-
-            else 
-            {
-                Write-Output "Folder '$LogFolder' already exists. No action taken."
-                
-            }
-           
-         }
+$InstallFolder = "C:\ProgramData\COMPANY\RenameHost"
+$LogFolder = "C:\ProgramData\COMPANY\Log"
 $LogPath = "C:\ProgramData\COMPANY\Log\RenameInstall.log"
+$TaskName = "RenameHost"
+$Files = @("RenameHost.xml", "RenameComputer.ps1", "ServiceUI.exe")
 
-# Start logging
-Start-Transcript -Path $LogPath -Append
+foreach ($Folder in @("C:\ProgramData\COMPANY", $InstallFolder, $LogFolder))
+{
+    if (!(Test-Path -Path $Folder))
+    {
+        New-Item -ItemType Directory -Path $Folder -Force | Out-Null
+        Write-Output "Folder '$Folder' created."
+    }
+}
 
-# Copy the XML file
-Copy-Item ".\RenameHost.xml" "C:\ProgramData\COMPANY\RenameHost\"
+Start-Transcript -Path $LogPath -Append | Out-Null
 
-# Copy the ps1 file
-Copy-Item ".\RenameComputer.ps1" "C:\ProgramData\COMPANY\RenameHost\"
+try
+{
+    foreach ($File in $Files)
+    {
+        Copy-Item -Path (Join-Path $PSScriptRoot $File) -Destination $InstallFolder -Force -ErrorAction Stop
+        Write-Output "Copied '$File' to '$InstallFolder'."
+    }
 
-# Copy the ps1 file
-Copy-Item ".\ServiceUI.exe" "C:\ProgramData\COMPANY\RenameHost\"
+    $TaskXml = Get-Content (Join-Path $InstallFolder "RenameHost.xml") -Raw -ErrorAction Stop
+    Register-ScheduledTask -Xml $TaskXml -TaskName $TaskName -TaskPath "\" -User "SYSTEM" -Force -ErrorAction Stop | Out-Null
+    Write-Output "Scheduled task '$TaskName' registered."
 
-Write-Output "renamehost.xml, renamecomputer.ps1 and ServiceUI.exe are copied successfully C:\ProgramData\COMPANY\RenameHost\"
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    Write-Output "Scheduled task '$TaskName' started."
+}
+catch
+{
+    Write-Output "ERROR: $($_.Exception.Message)"
+    Stop-Transcript | Out-Null
+    exit 1
+}
 
-
-Write-Output "Creating a task Scheduler for Host Rename"
-
-# Register a new Scheduled Task using the XML
-Register-ScheduledTask -xml (Get-Content C:\ProgramData\COMPANY\RenameHost\RenameHost.xml | Out-String) -TaskName "RenameHost" -TaskPath "\" -User system
-
-Write-Output "Triggering Task Scheduler"
-
-Start-ScheduledTask -TaskName "RenameHost"
-
-# Stop logging
-Stop-Transcript
+Stop-Transcript | Out-Null
+exit 0

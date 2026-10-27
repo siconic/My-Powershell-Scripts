@@ -1,8 +1,130 @@
-$directoryPath = "C:\ProgramData\Company\RenameHost"
+# Renames the computer to the COMPANY naming standard:
+#   first 3 characters of the current hostname (or $HostnamePrefix) + up to 10 characters of the BIOS serial number
+# Run by the RenameHost scheduled task (as SYSTEM, shown to the user through ServiceUI.exe).
+# The task is disabled only after the rename has succeeded and the user has restarted,
+# or when the hostname already matches. After a failure the task stays enabled and tries again.
 
-$LogFolder = "C:\ProgramData\Company\Log"
+$OrgName = "COMPANY"
 
-$LogPath = "C:\ProgramData\Company\Log\RenameInstall.log"
+# Set a fixed prefix (for example a site code) to use it instead of the first 3 characters of the current hostname.
+$HostnamePrefix = ""
+
+$TaskName = "RenameHost"
+$LogFolder = "C:\ProgramData\COMPANY\Log"
+$LogPath = "C:\ProgramData\COMPANY\Log\RenameInstall.log"
+$RegistryPath = "HKLM:\SOFTWARE\Packages\HostRename"
+
+# Default names that must not be used as a prefix
+$DefaultNamePatterns = @('^DESKTOP-', '^LAPTOP-', '^WIN-', '^MININT-')
+
+# BIOS serial values that are placeholders, not real serial numbers (compared after cleaning)
+$InvalidSerials = @('TOBEFILLEDBYOEM', 'DEFAULTSTRING', 'SYSTEMSERIALNUMBER', 'NONE', 'NA', 'INVALID', '0', '00000000', '0123456789', '123456789')
+
+function Get-TargetHostName
+{
+    param(
+        [string]$CurrentName,
+        [string]$Serial,
+        [string]$Prefix
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Serial))
+    {
+        throw "BIOS serial number could not be retrieved."
+    }
+
+    $CleanSerial = ($Serial.Trim() -replace '[^A-Za-z0-9]', '').ToUpper()
+
+    if ([string]::IsNullOrWhiteSpace($CleanSerial))
+    {
+        throw "BIOS serial number is empty after cleaning."
+    }
+
+    if ($InvalidSerials -contains $CleanSerial -or $CleanSerial -match '^0+$')
+    {
+        throw "BIOS serial number '$CleanSerial' is a placeholder value, not a real serial number."
+    }
+
+    if ($CleanSerial.Length -ge 10)
+    {
+        $ShortSerial = $CleanSerial.Substring(0, 10)
+    }
+    else
+    {
+        $ShortSerial = $CleanSerial
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Prefix))
+    {
+        if ([string]::IsNullOrWhiteSpace($CurrentName) -or $CurrentName.Length -lt 3)
+        {
+            throw "Current hostname '$CurrentName' is shorter than 3 characters."
+        }
+
+        foreach ($Pattern in $DefaultNamePatterns)
+        {
+            if ($CurrentName -match $Pattern)
+            {
+                throw "Current hostname '$CurrentName' is a Windows default name. Set `$HostnamePrefix or rename the device manually."
+            }
+        }
+
+        $Prefix = $CurrentName.Substring(0, 3)
+    }
+
+    $NewName = "$($Prefix)$($ShortSerial)".ToUpper()
+
+    if ($NewName.Length -gt 15)
+    {
+        throw "Generated hostname '$NewName' exceeds 15 characters."
+    }
+
+    if ($NewName -notmatch '^[A-Z0-9-]+$' -or $NewName -match '^[0-9]+$')
+    {
+        throw "Generated hostname '$NewName' is not a valid computer name."
+    }
+
+    return $NewName
+}
+
+function Disable-RenameTask
+{
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($Task)
+    {
+        Disable-ScheduledTask -TaskName $TaskName | Out-Null
+        Write-Output "Task '$TaskName' has been disabled."
+    }
+}
+
+function Request-Restart
+{
+    param([string]$NewName)
+
+    Add-Type -AssemblyName System.Windows.Forms
+
+    $Message = "Your computer name has been changed to '$NewName' to meet the $OrgName naming standard.`r`n`r`n" +
+        "A restart is required. Save your work, then click Yes to restart now.`r`n" +
+        "Click No to restart later; you will be asked again in 15 minutes."
+
+    $Result = [System.Windows.Forms.MessageBox]::Show(
+        $Message,
+        "Restart required",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Warning
+    )
+
+    if ($Result -eq [System.Windows.Forms.DialogResult]::Yes)
+    {
+        Write-Output "User chose to restart now."
+        Disable-RenameTask
+        Stop-Transcript | Out-Null
+        Restart-Computer -Force
+        exit 0
+    }
+
+    Write-Output "User postponed the restart. The task stays enabled and will ask again."
+}
 
 # Create the log folder if it does not exist
 if (!(Test-Path $LogFolder))
@@ -10,244 +132,68 @@ if (!(Test-Path $LogFolder))
     New-Item -Path $LogFolder -ItemType Directory -Force | Out-Null
 }
 
-# Create the RenameHost folder if it does not exist
-if (!(Test-Path $directoryPath))
+Start-Transcript -Path $LogPath -Append | Out-Null
+
+try
 {
-    New-Item -Path $directoryPath -ItemType Directory -Force | Out-Null
-}
-
-# Start logging
-Start-Transcript -Path $LogPath -Append
-
-# Get the full serial number
-$fullserial = Get-WmiObject Win32_BIOS | Select-Object -ExpandProperty "SerialNumber"
-
-Write-Output "Full Serial Number: $fullserial"
-
-# Validate serial number
-if ([string]::IsNullOrWhiteSpace($fullserial))
-{
-    Write-Output "ERROR: BIOS serial number could not be retrieved."
-    Write-Output "Computer rename will NOT be performed."
-    Stop-Transcript
-    exit 1
-}
-
-# Clean the serial number
-$fullserial = $fullserial.Trim()
-$fullserial = $fullserial -replace '[^A-Za-z0-9]', ''
-
-# Validate serial number after cleaning
-if ([string]::IsNullOrWhiteSpace($fullserial))
-{
-    Write-Output "ERROR: BIOS serial number is empty after cleaning."
-    Write-Output "Computer rename will NOT be performed."
-    Stop-Transcript
-    exit 1
-}
-
-Write-Output "Clean Serial Number: $fullserial"
-Write-Output "Serial Number Length: $($fullserial.Length)"
-
-# Get the short serial number
-# If serial is 10 characters or longer, use first 10 characters
-# If serial is shorter than 10 characters, use complete serial number
-
-if ($fullserial.Length -ge 10)
-{
-    $shortserial = $fullserial.Substring(0,10)
-
-    Write-Output "Full Serial Number is 10 characters or longer."
-    Write-Output "Using the first 10 characters of the serial number in the PC name."
-}
-else
-{
-    $shortserial = $fullserial
-
-    Write-Output "Serial Number is shorter than 10 characters."
-    Write-Output "Using entire serial number in PC name."
-}
-
-Write-Output "Serial Number Used: $shortserial"
-
-# Get the current hostname
-$hostname = (Get-ComputerInfo).CsName
-
-Write-Output "Current Hostname: $hostname"
-
-# Validate hostname
-if ([string]::IsNullOrWhiteSpace($hostname))
-{
-    Write-Output "ERROR: Current hostname could not be retrieved."
-    Write-Output "Computer rename will NOT be performed."
-    Stop-Transcript
-    exit 1
-}
-
-if ($hostname.Length -lt 3)
-{
-    Write-Output "ERROR: Current hostname is shorter than 3 characters."
-    Write-Output "Computer rename will NOT be performed."
-    Stop-Transcript
-    exit 1
-}
-
-# Log the old hostname
-$registryParentPath = "HKLM:\SOFTWARE\Packages"
-$registryPath = "HKLM:\SOFTWARE\Packages\HostRename"
-
-# Create parent registry path if it does not exist
-if (!(Test-Path $registryParentPath))
-{
-    New-Item -Path $registryParentPath -Force | Out-Null
-    Write-Output "Created registry path: $registryParentPath"
-}
-
-# Create HostRename registry path if it does not exist
-if (!(Test-Path $registryPath))
-{
-    New-Item -Path $registryPath -Force | Out-Null
-    Write-Output "Created registry path: $registryPath"
-}
-
-# Get the hostname prefix - first 3 characters
-$hostnameprefix = $hostname.Substring(0,3)
-
-Write-Output "The hostname prefix is '$hostnameprefix'"
-
-# Define the new COMPANY hostname
-# COMPANY Naming Standard:
-# First 3 characters of existing hostname + serial number
-
-$NewHostName = "$hostnameprefix$shortserial"
-
-Write-Output "New COMPANY Hostname: $NewHostName"
-
-# Validate the generated hostname
-if ([string]::IsNullOrWhiteSpace($shortserial))
-{
-    Write-Output "ERROR: Serial number portion is empty."
-    Write-Output "Computer rename will NOT be performed."
-    Stop-Transcript
-    exit 1
-}
-
-if ($NewHostName.Length -le 3)
-{
-    Write-Output "ERROR: Generated hostname '$NewHostName' is invalid."
-    Write-Output "Computer rename will NOT be performed."
-    Stop-Transcript
-    exit 1
-}
-
-if ($NewHostName.Length -gt 15)
-{
-    Write-Output "ERROR: Generated hostname '$NewHostName' exceeds 15 characters."
-    Write-Output "Computer rename will NOT be performed."
-    Stop-Transcript
-    exit 1
-}
-
-Write-Output "Generated hostname passed validation."
-
-if ($hostname -ne $NewHostName)
-{
-    New-ItemProperty -Path $registryPath -Name "OldHostname" -Value "$hostname" -PropertyType String -Force
-
-    Write-Output "Old hostname is stored in registry."
-}
-
-# Check whether hostname has COMPANY serial number or not
-
-if ($hostname -ne $NewHostName)
-{
-    If ($fullserial.Length -ge 10)
+    # Active name = name in use now. Pending name = name after the next restart.
+    $ActiveName = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName" -ErrorAction Stop).ComputerName
+    $PendingName = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName" -ErrorAction Stop).ComputerName
+    Write-Output "Current hostname: $ActiveName"
+    if ($PendingName -ne $ActiveName)
     {
-        # Rename computer
-        Rename-Computer -NewName "$NewHostName" -Verbose -Force
+        Write-Output "Pending hostname (after restart): $PendingName"
+    }
 
-        New-ItemProperty -Path $registryPath -Name "NewHostname" -Value "$NewHostName" -PropertyType String -Force
+    $Serial = (Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop).SerialNumber
+    Write-Output "BIOS serial number: $Serial"
 
-        Write-Output "Full Serial Number is 10 characters or longer. Using the first 10 characters of the serial in the PC name."
+    $NewHostName = Get-TargetHostName -CurrentName $ActiveName -Serial $Serial -Prefix $HostnamePrefix
+    Write-Output "Target hostname: $NewHostName"
 
-        # Define the registry path
-        $registryPath = "HKLM:\SOFTWARE\Packages\HostRename"
+    if ($ActiveName -eq $NewHostName)
+    {
+        Write-Output "Hostname already matches the $OrgName naming standard."
+        Disable-RenameTask
+        Stop-Transcript | Out-Null
+        exit 0
+    }
 
-        # Define the name and value of the new string
-        $name = "Rename"
-        $value = "1"
+    if (!(Test-Path $RegistryPath))
+    {
+        New-Item -Path $RegistryPath -Force | Out-Null
+    }
 
-        # Create the new string value and set its data
-        New-ItemProperty -Path $registryPath -Name $name -Value $value -PropertyType String -Force
+    if ($PendingName -eq $NewHostName)
+    {
+        Write-Output "Rename to '$NewHostName' is already done and waits for a restart."
     }
     else
     {
-        # Rename computer
-        Rename-Computer -NewName "$NewHostName" -Verbose -Force
-
-        New-ItemProperty -Path $registryPath -Name "NewHostname" -Value "$NewHostName" -PropertyType String -Force
-
-        Write-Output "Serial Number is shorter than 10 Characters. Using entire serial number in PC name."
-
-        # Define the registry path
-        $registryPath = "HKLM:\SOFTWARE\Packages\HostRename"
-
-        # Define the name and value of the new string
-        $name = "Rename"
-        $value = "1"
-
-        # Create the new string value and set its data
-        New-ItemProperty -Path $registryPath -Name $name -Value $value -PropertyType String -Force
-    }
-
-    Add-Type -AssemblyName System.Windows.Forms
-
-    $result = [System.Windows.Forms.MessageBox]::Show(
-        "Your Machine name has been updated with COMPANY standards, Click OK to restart the PC and apply the changes.",
-        "Restart",
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Warning
-    )
-
-    If ($result -eq "OK")
-    {
-        $taskName = "RenameHost"
-
-        $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-
-        if ($task)
+        $ComputerSystem = Get-CimInstance -ClassName Win32_ComputerSystem
+        if ($ComputerSystem.PartOfDomain)
         {
-            Disable-ScheduledTask -TaskName $taskName
-
-            Write-Output "Task '$taskName' has been disabled."
+            Write-Output "Device is joined to domain '$($ComputerSystem.Domain)'. The rename needs a reachable domain controller."
         }
 
-        Stop-Transcript
+        New-ItemProperty -Path $RegistryPath -Name "OldHostname" -Value $ActiveName -PropertyType String -Force | Out-Null
 
-        Restart-Computer -Force
+        Rename-Computer -NewName $NewHostName -Force -ErrorAction Stop -WarningAction SilentlyContinue
+
+        New-ItemProperty -Path $RegistryPath -Name "NewHostname" -Value $NewHostName -PropertyType String -Force | Out-Null
+        New-ItemProperty -Path $RegistryPath -Name "Rename" -Value "1" -PropertyType String -Force | Out-Null
+        Write-Output "Computer renamed to '$NewHostName'. A restart is required."
     }
-}
-else
-{
-    Write-Output "Hostname matches the current requirement of COMPANY."
 
-    $taskName = "RenameHost"
-
-    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-
-    if ($task)
-    {
-        Disable-ScheduledTask -TaskName $taskName
-
-        Write-Output "Task '$taskName' has been disabled."
-    }
-}
-
-# Stop logging
-try
-{
-    Stop-Transcript -ErrorAction SilentlyContinue
+    Request-Restart -NewName $NewHostName
 }
 catch
 {
+    Write-Output "ERROR: $($_.Exception.Message)"
+    Write-Output "Computer rename was NOT completed. The task stays enabled and tries again at the next run."
+    try { Stop-Transcript | Out-Null } catch { }
+    exit 1
 }
+
+try { Stop-Transcript | Out-Null } catch { }
+exit 0
