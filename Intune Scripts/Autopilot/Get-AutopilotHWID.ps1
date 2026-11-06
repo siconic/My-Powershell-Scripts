@@ -9,8 +9,9 @@
     internet connection and installs nothing from the PowerShell Gallery. It
     works in full Windows and at OOBE (Shift+F10).
 
-    The script first asks "Is this device part of a bulk enrollment?". For a
-    bulk enrollment it then asks for a Group Tag (can be left blank).
+    The script first asks "Is this device part of a bulk enrollment?". It
+    then asks for a Group Tag (can be left blank), for single and bulk
+    enrollment.
 
     In a console window the questions are asked in the console. In PowerShell
     ISE they are shown in a small window that stays on top of other windows.
@@ -36,8 +37,8 @@
     Yes or No. When not given, the script asks.
 
 .PARAMETER GroupTag
-    Autopilot group tag. When not given and the device is part of a bulk
-    enrollment, the script asks. Commas and double quotes are not allowed.
+    Autopilot group tag. When not given, the script asks. Commas and double
+    quotes are not allowed.
 
 .PARAMETER OutputPath
     Folder for the output files. Default: the folder the script is in, or the
@@ -54,7 +55,8 @@
     powershell.exe -ExecutionPolicy Bypass -File D:\Get-AutopilotHWID.ps1
 
 .NOTES
-    Version 2.0
+    Version 2.1
+    2.1 - The Group Tag question is also asked for single enrollment.
     2.0 - Questions are asked at the start, before the hash is collected.
           In PowerShell ISE the questions use a window that stays on top
           (Read-Host in ISE waited for input without a visible prompt).
@@ -189,7 +191,7 @@ else {
     $isBulk = Read-YesNo -Question 'Is this device part of a bulk enrollment?'
 }
 
-if ($isBulk -and -not $PSBoundParameters.ContainsKey('GroupTag')) {
+if (-not $PSBoundParameters.ContainsKey('GroupTag')) {
     $GroupTag = Read-GroupTag
 }
 
