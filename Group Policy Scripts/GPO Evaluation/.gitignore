@@ -1,0 +1,5 @@
+# Local configuration: contains organization names. Never commit.
+Config/GpoRoles.csv
+Config/ConsolidationRules.json
+Config/IntuneMappingRedactions.txt
+Config/IntunePolicyMappings.Internal.json
