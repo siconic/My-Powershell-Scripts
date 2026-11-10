@@ -1,7 +1,9 @@
 #==========================================================
-# Version 4.0
+# Version 5.0
 #
 # Changelog:
+#   5.0 - No changes to this module. Moved into the Modules folder;
+#         version kept in lockstep with Compare-GPOXml.ps1.
 #   4.0 - No changes to this module. Version kept in lockstep with
 #         Compare-GPOXml.ps1 (Excel workbook output added).
 #   3.3 - No changes to this module. Version kept in lockstep with

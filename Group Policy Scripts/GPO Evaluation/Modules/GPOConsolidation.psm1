@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 GPOConsolidation.psm1
-Version 1.0
+Version 2.0
 
 Helper functions for New-GpoConsolidationPlan.ps1:
 - reading Compare-GPOXml.ps1 and Compare-GPOHtml.ps1 output (workbook or
@@ -14,6 +14,8 @@ Helper functions for New-GpoConsolidationPlan.ps1:
 - writing the Excel workbook.
 
 Changelog
+2.0  No changes to this module. Moved into the Modules folder; version
+     kept in lockstep with New-GpoConsolidationPlan.ps1.
 1.0  First version.
 #>
 

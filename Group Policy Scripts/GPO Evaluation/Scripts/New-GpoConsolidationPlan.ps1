@@ -20,8 +20,9 @@ settings, so it comes from GpoRoles.csv:
 ConsolidationRules.json holds the decisions that are not in the data:
 ReferenceSite, ValueOverrides, BrandingSettings, IntuneExclusions,
 IntuneKeepList, RetireRules and ReviewNotes. GpoRoles.example.csv and
-ConsolidationRules.example.json show the format; copy them to
-GpoRoles.csv and ConsolidationRules.json and fill in your GPO names.
+ConsolidationRules.example.json in the Config folder show the format;
+copy them to GpoRoles.csv and ConsolidationRules.json in the same folder
+and fill in your GPO names.
 
 Steps:
 1. Settings are normalized so GPO XML and GPResult HTML names match (qN:
@@ -59,13 +60,13 @@ IntuneMigrationCandidates, FirewallRules). When a GPO is in more than one
 XML input, the first one is used.
 
 .PARAMETER RolesPath
-GpoRoles.csv. Default: next to this script.
+GpoRoles.csv. Default: the Config folder.
 
 .PARAMETER RulesPath
-ConsolidationRules.json. Default: next to this script.
+ConsolidationRules.json. Default: the Config folder.
 
 .PARAMETER DeprecatedReferencePath
-DeprecatedPoliciesReference.md. Default: next to this script.
+DeprecatedPoliciesReference.md. Default: the Data folder.
 
 .PARAMETER OutputPath
 Workbook to write. Default: GpoConsolidationPlan-<timestamp>.xlsx in the
@@ -78,12 +79,15 @@ Text put in front of the default output file name, for example "SiteA-".
 .\New-GpoConsolidationPlan.ps1 -InputPath .\All-GPOCompareXml.xlsx, .\HTML
 
 .NOTES
-Version 1.0
+Version 2.0
 Requires the ImportExcel module (installed for the current user if missing).
 Uses GPOConsolidation.psm1 and GPOCompare.psm1 (deprecated policy matching)
-from the script folder.
+from the Modules folder.
 
 Changelog
+2.0  Files moved into Scripts, Modules, Data and Config folders: GpoRoles.csv
+     and ConsolidationRules.json are read from Config. Parameters and output
+     are unchanged. New launcher Start-GPOToolkit.ps1.
 1.0  First version.
 #>
 
@@ -92,11 +96,11 @@ param(
     [Parameter(Mandatory)]
     [string[]]$InputPath,
 
-    [string]$RolesPath = (Join-Path $PSScriptRoot 'GpoRoles.csv'),
+    [string]$RolesPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'Config\GpoRoles.csv'),
 
-    [string]$RulesPath = (Join-Path $PSScriptRoot 'ConsolidationRules.json'),
+    [string]$RulesPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'Config\ConsolidationRules.json'),
 
-    [string]$DeprecatedReferencePath = (Join-Path $PSScriptRoot 'DeprecatedPoliciesReference.md'),
+    [string]$DeprecatedReferencePath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'Data\DeprecatedPoliciesReference.md'),
 
     [string]$OutputPath,
 
@@ -124,8 +128,8 @@ if (-not (Get-Module -ListAvailable -Name ImportExcel))
 }
 
 Import-Module ImportExcel -ErrorAction Stop
-Import-Module (Join-Path $PSScriptRoot 'GPOConsolidation.psm1') -Force -ErrorAction Stop
-Import-Module (Join-Path $PSScriptRoot 'GPOCompare.psm1') -Force -ErrorAction Stop
+Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'Modules\GPOConsolidation.psm1') -Force -ErrorAction Stop
+Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'Modules\GPOCompare.psm1') -Force -ErrorAction Stop
 
 if ([string]::IsNullOrWhiteSpace($OutputPath))
 {
