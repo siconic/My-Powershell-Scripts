@@ -4,8 +4,8 @@ Renames a computer to the organization's naming standard: a 3-character prefix
 plus up to 10 characters of the BIOS serial number. A scheduled task runs the
 rename at user logon and asks the user to restart.
 
-To let the user type the new name instead, use
-[DeviceRenameCustom](../DeviceRenameCustom/README.md).
+To rename a device by hand to a name you type in, run
+[Rename-DeviceCustom.ps1](../../DeviceRenameCustom/README.md) on the device.
 
 ## Files
 
