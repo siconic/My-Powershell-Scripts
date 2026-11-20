@@ -5,7 +5,7 @@ plus up to 10 characters of the BIOS serial number. A scheduled task runs the
 rename at user logon and asks the user to restart.
 
 To rename a device by hand to a name you type in, run
-[Rename-DeviceCustom.ps1](../../DeviceRenameCustom/README.md) on the device.
+[Rename-DeviceCustom.ps1](../../Device%20Rename%20Manual/README.md) on the device.
 
 ## Files
 
