@@ -18,11 +18,17 @@
            - starts with -RequiredPrefix, when it is given
          An invalid name is rejected with the reason and asked again.
          Letters are converted to capitals.
-      3. Asks for confirmation, then runs Rename-Computer.
-      4. Asks whether to restart now. The new name is active after the restart.
+      3. Asks for confirmation.
+      4. Domain-joined device only: asks whether to use a different domain
+         account for the rename of the AD computer object (No = the account
+         that runs the script). Skipped when -DomainCredential is given.
+      5. Runs Rename-Computer.
+      6. Asks whether to restart now. The new name is active after the restart.
 
     In a console window the questions are asked in the console. In PowerShell
     ISE they are shown in a small window that stays on top of other windows.
+    The password is hidden in both: Read-Host -AsSecureString in the console,
+    a masked password box in ISE. It is kept only as a SecureString in memory.
 
     Intune shows the new device name after the device restarts and syncs.
 
@@ -31,6 +37,11 @@
 
 .PARAMETER RequiredPrefix
     Optional. The new name must start with this text, for example a site code.
+
+.PARAMETER DomainCredential
+    Optional. Domain account used to rename the AD computer object, for
+    example (Get-Credential). Used only on a domain-joined device. When not
+    given on a domain-joined device, the script asks whether to enter one.
 
 .EXAMPLE
     .\Rename-DeviceCustom.ps1
@@ -41,8 +52,15 @@
 .EXAMPLE
     .\Rename-DeviceCustom.ps1 -RequiredPrefix NYC
 
+.EXAMPLE
+    .\Rename-DeviceCustom.ps1 -DomainCredential (Get-Credential)
+
 .NOTES
-    Version 1.0
+    Version 1.1
+    1.1 - New parameter -DomainCredential. On a domain-joined device the
+          script asks whether to use a different domain account for the AD
+          rename, and asks for user name and password (hidden; in ISE a
+          window with a masked password box).
     1.0 - First version. Replaces the DeviceRenameCustom Win32 app (scheduled
           task and ServiceUI) with one script that is run directly.
 #>
@@ -51,7 +69,9 @@ param(
     [string]$NewName,
 
     [ValidatePattern('^[A-Za-z0-9-]{0,14}$')]
-    [string]$RequiredPrefix = ''
+    [string]$RequiredPrefix = '',
+
+    [System.Management.Automation.PSCredential]$DomainCredential
 )
 
 $ErrorActionPreference = 'Stop'
@@ -125,6 +145,135 @@ function Show-InputDialog {
     return $text
 }
 
+function Show-CredentialDialog {
+    # ISE only. Window with a user name box and a masked password box.
+    # Returns @{ UserName; Password (SecureString) }, or $null when the user cancels.
+    param([string]$Message)
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text            = 'Domain account'
+    $form.TopMost         = $true
+    $form.StartPosition   = 'CenterScreen'
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MinimizeBox     = $false
+    $form.MaximizeBox     = $false
+    $form.ClientSize      = New-Object System.Drawing.Size(420, 190)
+
+    $label          = New-Object System.Windows.Forms.Label
+    $label.Text     = $Message
+    $label.Location = New-Object System.Drawing.Point(12, 12)
+    $label.Size     = New-Object System.Drawing.Size(396, 48)
+    $form.Controls.Add($label)
+
+    $userLabel          = New-Object System.Windows.Forms.Label
+    $userLabel.Text     = 'User name:'
+    $userLabel.Location = New-Object System.Drawing.Point(12, 70)
+    $userLabel.Size     = New-Object System.Drawing.Size(80, 22)
+    $form.Controls.Add($userLabel)
+
+    $userBox          = New-Object System.Windows.Forms.TextBox
+    $userBox.Location = New-Object System.Drawing.Point(96, 67)
+    $userBox.Size     = New-Object System.Drawing.Size(312, 22)
+    $form.Controls.Add($userBox)
+
+    $passwordLabel          = New-Object System.Windows.Forms.Label
+    $passwordLabel.Text     = 'Password:'
+    $passwordLabel.Location = New-Object System.Drawing.Point(12, 106)
+    $passwordLabel.Size     = New-Object System.Drawing.Size(80, 22)
+    $form.Controls.Add($passwordLabel)
+
+    $passwordBox                       = New-Object System.Windows.Forms.TextBox
+    $passwordBox.Location              = New-Object System.Drawing.Point(96, 103)
+    $passwordBox.Size                  = New-Object System.Drawing.Size(312, 22)
+    $passwordBox.UseSystemPasswordChar = $true
+    $form.Controls.Add($passwordBox)
+
+    $okButton              = New-Object System.Windows.Forms.Button
+    $okButton.Text         = 'OK'
+    $okButton.Size         = New-Object System.Drawing.Size(90, 28)
+    $okButton.Location     = New-Object System.Drawing.Point(222, 148)
+    $okButton.DialogResult = 'OK'
+    $form.Controls.Add($okButton)
+
+    $cancelButton              = New-Object System.Windows.Forms.Button
+    $cancelButton.Text         = 'Cancel'
+    $cancelButton.Size         = New-Object System.Drawing.Size(90, 28)
+    $cancelButton.Location     = New-Object System.Drawing.Point(318, 148)
+    $cancelButton.DialogResult = 'Cancel'
+    $form.Controls.Add($cancelButton)
+
+    $form.AcceptButton = $okButton
+    $form.CancelButton = $cancelButton
+    $form.Add_Shown({
+        $this.Activate()
+        $userBox.Focus() | Out-Null
+    })
+
+    $result = $form.ShowDialog()
+
+    # Copy the password into a SecureString one character at a time, then clear the box.
+    $securePassword = New-Object System.Security.SecureString
+    foreach ($character in $passwordBox.Text.ToCharArray()) { $securePassword.AppendChar($character) }
+    $securePassword.MakeReadOnly()
+    $passwordBox.Clear()
+    $userName = $userBox.Text
+    $form.Dispose()
+
+    if ($result -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
+    return [PSCustomObject]@{ UserName = $userName; Password = $securePassword }
+}
+
+function Show-Warning {
+    param([string]$Text)
+    if ($script:UseDialog) {
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.MessageBox]::Show($Text, 'Rename computer', 'OK', 'Warning') | Out-Null
+    }
+    else {
+        Write-Host $Text -ForegroundColor Yellow
+    }
+}
+
+function Read-DomainCredential {
+    # Asks for a domain user name and password. Returns a PSCredential, or $null when the user cancels.
+    # A user name without a domain part gets the device's domain: <domain>\<user>.
+    param([string]$DomainName)
+
+    $message = "Domain account that may rename computer objects in AD.`nUser name as DOMAIN\user or user@domain."
+    while ($true) {
+        if ($script:UseDialog) {
+            $answer = Show-CredentialDialog -Message $message
+            if ($null -eq $answer) { return $null }
+            $userName = "$($answer.UserName)".Trim()
+            $password = $answer.Password
+        }
+        else {
+            Write-Host $message
+            $userName = "$(Read-Host 'User name, or Q to quit')".Trim()
+            if ($userName.ToUpper() -eq 'Q') { return $null }
+            if (-not $userName) {
+                Show-Warning -Text 'Enter a user name.'
+                continue
+            }
+            $password = Read-Host 'Password' -AsSecureString
+        }
+
+        if (-not $userName) {
+            Show-Warning -Text 'Enter a user name.'
+            continue
+        }
+        if ($null -eq $password -or $password.Length -eq 0) {
+            Show-Warning -Text 'Enter a password.'
+            continue
+        }
+
+        if ($userName -notmatch '[\\@]') { $userName = "$($DomainName)\$($userName)" }
+        return New-Object System.Management.Automation.PSCredential($userName, $password)
+    }
+}
+
 function Read-YesNo {
     # Returns $true for Yes, $false for No.
     param([string]$Question)
@@ -186,12 +335,7 @@ function Read-NewName {
         $reason = Test-HostName -Name $name -Prefix $Prefix
         if (-not $reason) { return $name }
 
-        if ($script:UseDialog) {
-            [System.Windows.Forms.MessageBox]::Show($reason, 'Rename computer', 'OK', 'Warning') | Out-Null
-        }
-        else {
-            Write-Host $reason -ForegroundColor Yellow
-        }
+        Show-Warning -Text $reason
     }
 }
 
@@ -254,15 +398,45 @@ else {
         exit 0
     }
 
+    $renameParams = @{
+        NewName       = $targetName
+        Force         = $true
+        WarningAction = 'SilentlyContinue'
+    }
+
     if ($computer.PartOfDomain) {
-        Write-Host 'The device is domain joined. The rename needs a reachable domain controller.'
+        Write-Host 'The device is domain joined. The rename also renames the AD computer object and needs a reachable domain controller.'
+        $credential = $DomainCredential
+        if (-not $credential) {
+            $useOtherAccount = Read-YesNo -Question "Use a different domain account to rename the computer object in AD? Choose No to use the account that runs this script ($($identity.Name))."
+            if ($useOtherAccount) {
+                $credential = Read-DomainCredential -DomainName $computer.Domain
+                if (-not $credential) {
+                    Write-Host 'Cancelled. The computer name was not changed.'
+                    exit 0
+                }
+            }
+        }
+        if ($credential) {
+            $renameParams['DomainCredential'] = $credential
+            Write-Host "AD rename uses the account $($credential.UserName)."
+        }
+        else {
+            Write-Host "AD rename uses the account $($identity.Name)."
+        }
+    }
+    elseif ($DomainCredential) {
+        Write-Host 'The device is not domain joined. -DomainCredential is not used.'
     }
 
     try {
-        Rename-Computer -NewName $targetName -Force -WarningAction SilentlyContinue
+        Rename-Computer @renameParams
     }
     catch {
         Write-Host "The computer could not be renamed: $($_.Exception.Message)" -ForegroundColor Red
+        if ($computer.PartOfDomain) {
+            Write-Host 'If the error is "Access is denied", run the script again and use a domain account that may rename computer objects in AD.' -ForegroundColor Yellow
+        }
         exit 1
     }
     Write-Host "Computer renamed to '$targetName'. The new name is active after a restart." -ForegroundColor Green
